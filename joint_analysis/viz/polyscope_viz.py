@@ -145,6 +145,40 @@ class PolyscopeVisualizer:
         """
         prefix = "GT " if is_ground_truth else ""
 
+        # if joint_type == "planar":
+        #     # Extract parameters
+        #     n_np = joint_params.get("normal", np.array([0., 0., 1.]))
+        #
+        #     # Visualize normal
+        #     seg_nodes = np.array([[0, 0, 0], n_np])
+        #     seg_edges = np.array([[0, 1]])
+        #     name = f"{prefix}Planar Normal"
+        #     planarnet = ps.register_curve_network(name, seg_nodes, seg_edges)
+        #     planarnet.set_color((1.0, 0.0, 0.0))
+        #     planarnet.set_radius(0.02)
+        #     self.joint_curves[name] = planarnet
+        #
+        #     # Compute orthogonal axes
+        #     x_axis = np.array([1., 0., 0.])
+        #     y_axis = np.array([0., 1., 0.])
+        #
+        #     # Choose a reference vector that's not parallel to the normal
+        #     ref = y_axis if np.abs(np.dot(n_np, x_axis)) < np.abs(np.dot(n_np, y_axis)) else x_axis
+        #
+        #     # Compute orthogonal vectors
+        #     axis1 = np.cross(n_np, ref)
+        #     axis1 = axis1 / (np.linalg.norm(axis1) + 1e-6)
+        #     axis2 = np.cross(n_np, axis1)
+        #     axis2 = axis2 / (np.linalg.norm(axis2) + 1e-6)
+        #
+        #     # Visualize orthogonal axes
+        #     seg_nodes2 = np.array([[0, 0, 0], axis1, [0, 0, 0], axis2], dtype=np.float32)
+        #     seg_edges2 = np.array([[0, 1], [2, 3]])
+        #     name = f"{prefix}Planar Axes"
+        #     planarex = ps.register_curve_network(name, seg_nodes2, seg_edges2)
+        #     planarex.set_color((0., 1., 0.))
+        #     planarex.set_radius(0.02)
+        #     self.joint_curves[name] = planarex
         if joint_type == "planar":
             # Extract parameters
             n_np = joint_params.get("normal", np.array([0., 0., 1.]))
@@ -157,28 +191,6 @@ class PolyscopeVisualizer:
             planarnet.set_color((1.0, 0.0, 0.0))
             planarnet.set_radius(0.02)
             self.joint_curves[name] = planarnet
-
-            # Compute orthogonal axes
-            x_axis = np.array([1., 0., 0.])
-            y_axis = np.array([0., 1., 0.])
-
-            # Choose a reference vector that's not parallel to the normal
-            ref = y_axis if np.abs(np.dot(n_np, x_axis)) < np.abs(np.dot(n_np, y_axis)) else x_axis
-
-            # Compute orthogonal vectors
-            axis1 = np.cross(n_np, ref)
-            axis1 = axis1 / (np.linalg.norm(axis1) + 1e-6)
-            axis2 = np.cross(n_np, axis1)
-            axis2 = axis2 / (np.linalg.norm(axis2) + 1e-6)
-
-            # Visualize orthogonal axes
-            seg_nodes2 = np.array([[0, 0, 0], axis1, [0, 0, 0], axis2], dtype=np.float32)
-            seg_edges2 = np.array([[0, 1], [2, 3]])
-            name = f"{prefix}Planar Axes"
-            planarex = ps.register_curve_network(name, seg_nodes2, seg_edges2)
-            planarex.set_color((0., 1., 0.))
-            planarex.set_radius(0.02)
-            self.joint_curves[name] = planarex
 
         elif joint_type == "ball":
             # Extract parameters

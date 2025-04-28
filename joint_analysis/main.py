@@ -98,7 +98,7 @@ class JointAnalysisApp:
         self.zp_order = 4.0
         self.prob_sigma = 0.2
         self.prob_order = 4.0
-        self.neighbor_k = 50
+        self.neighbor_k = 10
         self.use_savgol_filter = False
         self.savgol_window_length = 10
         self.savgol_polyorder = 2
@@ -1116,23 +1116,6 @@ class JointAnalysisApp:
         else:
             psim.TextUnformatted("Not enough frames to do joint classification.")
 
-    # def run(self) -> None:
-    #     """Run the application."""
-    #     # Register point clouds
-    #     self._register_point_clouds()
-    #
-    #     # Start GUI in a thread
-    #     gui_thread = self.gui.start_in_thread()
-    #
-    #     # Set up the Polyscope callback
-    #     self.ps_viz.setup_camera()
-    #     ps.set_user_callback(self.polyscope_callback)
-    #
-    #     # Show the Polyscope window
-    #     ps.show()
-    #
-    #     # Clean up
-    #     self.gui.shutdown()
     def run(self) -> None:
         """Run the application."""
         print("Starting JointAnalysisApp...")
@@ -1180,21 +1163,6 @@ class JointAnalysisApp:
             print("Cleaning up...")
             self.gui.shutdown()
 
-# def run_application(use_gui=False):
-#     """Run the joint analysis application."""
-#     app = JointAnalysisApp()
-#
-#     if use_gui:
-#         # 只使用DearPyGUI
-#         app.gui.start()
-#         app.gui.run()
-#     else:
-#         # 只使用Polyscope，禁用GUI更新
-#         app.use_gui = False  # 添加此标志
-#         app._register_point_clouds()
-#         app.ps_viz.setup_camera()
-#         ps.set_user_callback(app.polyscope_callback)
-#         ps.show()
 def run_application(use_gui=True):
     """Run the joint analysis application."""
     print(f"Starting joint analysis application with GUI: {use_gui}")

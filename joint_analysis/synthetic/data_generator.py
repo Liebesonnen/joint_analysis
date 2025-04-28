@@ -127,7 +127,7 @@ class SyntheticJointGenerator:
         self.screw_joint_origin_3 = np.array([-1., 0., 1.])
         self.screw_joint_pitch_3 = 0.6
 
-    def generate_prismatic_door_sequence(self, n_frames=50, max_displacement=5.0):
+    def generate_prismatic_door_sequence(self, n_frames=150, max_displacement=5.0):
         """
         Generate a sequence of a prismatic door motion.
 
@@ -152,7 +152,7 @@ class SyntheticJointGenerator:
 
         return np.stack(frames, axis=0)
 
-    def generate_prismatic_door_2_sequence(self, n_frames=50, max_displacement=4.0):
+    def generate_prismatic_door_2_sequence(self, n_frames=150, max_displacement=4.0):
         """
         Generate a sequence of a second prismatic door motion.
 
@@ -177,7 +177,7 @@ class SyntheticJointGenerator:
 
         return np.stack(frames, axis=0)
 
-    def generate_prismatic_door_3_sequence(self, n_frames=50, max_displacement=3.0):
+    def generate_prismatic_door_3_sequence(self, n_frames=150, max_displacement=3.0):
         """
         Generate a sequence of a third prismatic door motion.
 
@@ -202,7 +202,7 @@ class SyntheticJointGenerator:
 
         return np.stack(frames, axis=0)
 
-    def generate_revolute_door_sequence(self, n_frames=50, angle_min=-45.0, angle_max=45.0):
+    def generate_revolute_door_sequence(self, n_frames=150, angle_min=-45.0, angle_max=45.0):
         """
         Generate a sequence of a revolute door motion.
 
@@ -229,7 +229,7 @@ class SyntheticJointGenerator:
 
         return np.stack(frames, axis=0)
 
-    def generate_revolute_door_2_sequence(self, n_frames=50, angle_min=-30.0, angle_max=60.0):
+    def generate_revolute_door_2_sequence(self, n_frames=150, angle_min=-30.0, angle_max=60.0):
         """
         Generate a sequence of a second revolute door motion.
 
@@ -256,7 +256,7 @@ class SyntheticJointGenerator:
 
         return np.stack(frames, axis=0)
 
-    def generate_revolute_door_3_sequence(self, n_frames=50, angle_min=0.0, angle_max=90.0):
+    def generate_revolute_door_3_sequence(self, n_frames=150, angle_min=0.0, angle_max=90.0):
         """
         Generate a sequence of a third revolute door motion.
 
@@ -283,7 +283,7 @@ class SyntheticJointGenerator:
 
         return np.stack(frames, axis=0)
 
-    def generate_planar_mouse_sequence(self, n_frames=50):
+    def generate_planar_mouse_sequence(self, n_frames=150):
         """
         Generate a sequence of a planar mouse motion.
 
@@ -322,7 +322,7 @@ class SyntheticJointGenerator:
 
         return np.stack(frames, axis=0)
 
-    def generate_planar_mouse_2_sequence(self, n_frames=50):
+    def generate_planar_mouse_2_sequence(self, n_frames=150):
         """
         Generate a sequence of a second planar mouse motion.
 
@@ -363,7 +363,7 @@ class SyntheticJointGenerator:
 
         return np.stack(frames, axis=0)
 
-    def generate_planar_mouse_3_sequence(self, n_frames=50):
+    def generate_planar_mouse_3_sequence(self, n_frames=150):
         """
         Generate a sequence of a third planar mouse motion.
 
@@ -404,7 +404,7 @@ class SyntheticJointGenerator:
 
         return np.stack(frames, axis=0)
 
-    def generate_ball_joint_sequence(self, n_frames=50):
+    def generate_ball_joint_sequence(self, n_frames=150):
         """
         Generate a sequence of a ball joint motion.
 
@@ -448,7 +448,7 @@ class SyntheticJointGenerator:
 
         return np.stack(frames, axis=0)
 
-    def generate_ball_joint_2_sequence(self, n_frames=50):
+    def generate_ball_joint_2_sequence(self, n_frames=150):
         """
         Generate a sequence of a second ball joint motion.
 
@@ -486,7 +486,7 @@ class SyntheticJointGenerator:
 
         return np.stack(frames, axis=0)
 
-    def generate_ball_joint_3_sequence(self, n_frames=50):
+    def generate_ball_joint_3_sequence(self, n_frames=150):
         """
         Generate a sequence of a third ball joint motion.
 
@@ -530,7 +530,7 @@ class SyntheticJointGenerator:
 
         return np.stack(frames, axis=0)
 
-    def generate_screw_joint_sequence(self, n_frames=50):
+    def generate_screw_joint_sequence(self, n_frames=150):
         """
         Generate a sequence of a screw joint motion.
 
@@ -559,7 +559,7 @@ class SyntheticJointGenerator:
 
         return np.stack(frames, axis=0)
 
-    def generate_screw_joint_2_sequence(self, n_frames=50):
+    def generate_screw_joint_2_sequence(self, n_frames=150):
         """
         Generate a sequence of a second screw joint motion.
 
@@ -588,7 +588,7 @@ class SyntheticJointGenerator:
 
         return np.stack(frames, axis=0)
 
-    def generate_screw_joint_3_sequence(self, n_frames=50):
+    def generate_screw_joint_3_sequence(self, n_frames=150):
         """
         Generate a sequence of a third screw joint motion.
 
@@ -617,7 +617,7 @@ class SyntheticJointGenerator:
 
         return np.stack(frames, axis=0)
 
-    def generate_all_sequences(self, n_frames=50):
+    def generate_all_sequences(self, n_frames=150):
         """
         Generate all sequences and save them to files.
 

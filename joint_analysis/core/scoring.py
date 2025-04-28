@@ -274,11 +274,11 @@ def compute_position_average_3d(pts):
 
 def compute_basic_scores(
         v_history, w_history, device='cuda',
-        col_sigma=0.2, col_order=4.0,
-        cop_sigma=0.2, cop_order=4.0,
-        rad_sigma=0.2, rad_order=4.0,
-        zp_sigma=0.2, zp_order=4.0,
-        omega_thresh=1e-5,
+        col_sigma=0.3, col_order=3.0,
+        cop_sigma=0.3, cop_order=3.0,
+        rad_sigma=0.3, rad_order=3.0,
+        zp_sigma=0.3, zp_order=3.0,
+        omega_thresh=1e-6,
         eps_vec=1e-3
 ):
     """
@@ -363,36 +363,57 @@ def compute_basic_scores(
     # ----------------------------
     # (B) Radius consistency score
     # ----------------------------
+    # rad_score = torch.zeros(N, device=device)
+    #
+    # if Tm1 > 0:
+    #     # Calculate radius r = v / w for frames where w is significant
+    #     v_mag = torch.norm(v_clean, dim=2)  # (T-1, N)
+    #     w_mag = torch.norm(w_clean, dim=2)  # (T-1, N)
+    #
+    #     # Identify frames with significant angular velocity
+    #     valid_mask = (w_mag >= omega_thresh)
+    #     r_mat = torch.zeros_like(v_mag)
+    #     r_mat[valid_mask] = v_mag[valid_mask] / w_mag[valid_mask]
+    #
+    #     # Compute radius consistency score for each point
+    #     final_scores = torch.zeros(N, device=device)
+    #
+    #     for i in range(N):
+    #         # Find frames with valid angular velocity for this point
+    #         valid_frames_i = valid_mask[:, i]  # shape (T-1,)
+    #         # Get radius values for those frames
+    #         r_vals_i = r_mat[valid_frames_i, i]
+    #
+    #         # Skip points with insufficient valid frames
+    #         if r_vals_i.numel() <= 1:
+    #             final_scores[i] = 0.0
+    #         else:
+    #             # Compute variance of radius and convert to score
+    #             var_r_i = torch.var(r_vals_i, unbiased=False)
+    #             final_scores[i] = super_gaussian(var_r_i, rad_sigma, rad_order)
+    #
+    #     rad_score = final_scores
     rad_score = torch.zeros(N, device=device)
-
-    if Tm1 > 0:
-        # Calculate radius r = v / w for frames where w is significant
-        v_mag = torch.norm(v_clean, dim=2)  # (T-1, N)
-        w_mag = torch.norm(w_clean, dim=2)  # (T-1, N)
-
-        # Identify frames with significant angular velocity
-        valid_mask = (w_mag >= omega_thresh)
+    if Tm1 > 1:
+        EPS_W = 1e-3
+        v_mag = torch.norm(v_clean, dim=2)
+        w_mag = torch.norm(w_clean, dim=2)
         r_mat = torch.zeros_like(v_mag)
-        r_mat[valid_mask] = v_mag[valid_mask] / w_mag[valid_mask]
+        mask_w_nonzero = (w_mag > EPS_W)
+        r_mat[mask_w_nonzero] = v_mag[mask_w_nonzero] / w_mag[mask_w_nonzero]
+        r_i = r_mat[:-1]
+        r_ip1 = r_mat[1:]
+        diff_val = torch.zeros_like(r_i)
+        valid_mask = (r_i > 1e-6) & (r_ip1 > 0)
+        diff_val[valid_mask] = torch.abs(r_ip1[valid_mask] - r_i[valid_mask]) / (r_i[valid_mask] + 1e-6)
+        rad_mat = super_gaussian(diff_val, rad_sigma, rad_order)
+        mask_w_zero = (w_mag < EPS_W)
+        mask_w_i = mask_w_zero[:-1]
+        mask_w_ip1 = mask_w_zero[1:]
+        rad_mat[mask_w_i] = 0
+        rad_mat[mask_w_ip1] = 0
+        rad_score = rad_mat.mean(dim=0)
 
-        # Compute radius consistency score for each point
-        final_scores = torch.zeros(N, device=device)
-
-        for i in range(N):
-            # Find frames with valid angular velocity for this point
-            valid_frames_i = valid_mask[:, i]  # shape (T-1,)
-            # Get radius values for those frames
-            r_vals_i = r_mat[valid_frames_i, i]
-
-            # Skip points with insufficient valid frames
-            if r_vals_i.numel() <= 1:
-                final_scores[i] = 0.0
-            else:
-                # Compute variance of radius and convert to score
-                var_r_i = torch.var(r_vals_i, unbiased=False)
-                final_scores[i] = super_gaussian(var_r_i, rad_sigma, rad_order)
-
-        rad_score = final_scores
 
     # ----------------------------
     # (C) Zero pitch score
