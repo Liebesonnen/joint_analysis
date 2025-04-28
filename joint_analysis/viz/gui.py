@@ -419,7 +419,6 @@ class JointAnalysisGUI:
         gui_thread.start()
 
         return gui_thread
-
     def shutdown(self) -> None:
         """Shutdown the GUI."""
         if dpg.is_dearpygui_running():

@@ -1,7 +1,7 @@
 """
 Main application for joint analysis.
 """
-
+import dearpygui.dearpygui as dpg
 import os
 import time
 import numpy as np
@@ -9,6 +9,9 @@ import threading
 import polyscope as ps
 import polyscope.imgui as psim
 from typing import Dict, List, Optional, Callable, Any, Union
+
+from onnxruntime.tools.offline_tuning import TuningResults
+
 from .core.geometry import generate_ball_joint_points, generate_hollow_cylinder
 from .core.ekf import ExtendedKalmanFilter3D
 from .core.joint_estimation import compute_joint_info_all_types
@@ -1113,40 +1116,93 @@ class JointAnalysisApp:
         else:
             psim.TextUnformatted("Not enough frames to do joint classification.")
 
+    # def run(self) -> None:
+    #     """Run the application."""
+    #     # Register point clouds
+    #     self._register_point_clouds()
+    #
+    #     # Start GUI in a thread
+    #     gui_thread = self.gui.start_in_thread()
+    #
+    #     # Set up the Polyscope callback
+    #     self.ps_viz.setup_camera()
+    #     ps.set_user_callback(self.polyscope_callback)
+    #
+    #     # Show the Polyscope window
+    #     ps.show()
+    #
+    #     # Clean up
+    #     self.gui.shutdown()
     def run(self) -> None:
         """Run the application."""
-        # Register point clouds
+        print("Starting JointAnalysisApp...")
+
+        # 注册点云
+        print("Registering point clouds...")
         self._register_point_clouds()
 
-        # Start GUI in a thread
-        gui_thread = self.gui.start_in_thread()
+        # 初始化 GUI 但不启动事件循环
+        print("Starting GUI...")
+        self.gui.start(width=800, height=600)
 
-        # Set up the Polyscope callback
-        self.ps_viz.setup_camera()
-        ps.set_user_callback(self.polyscope_callback)
+        # 创建停止事件
+        self.stop_event = threading.Event()
 
-        # Show the Polyscope window
-        ps.show()
+        # 定义 Polyscope 线程函数
+        def run_polyscope():
+            print("Setting up Polyscope...")
+            self.ps_viz.setup_camera()
+            ps.set_user_callback(self.polyscope_callback)
 
-        # Clean up
-        self.gui.shutdown()
+            print("Showing Polyscope...")
+            ps.show()
 
+            # 当 Polyscope 窗口关闭时通知主线程
+            self.stop_event.set()
+            print("Polyscope window closed")
 
-def run_application(use_gui=False):
+        # 启动 Polyscope 线程
+        ps_thread = threading.Thread(target=run_polyscope)
+        ps_thread.daemon = True
+        ps_thread.start()
+
+        # 主循环
+        print("Entering main loop...")
+        try:
+            while dpg.is_dearpygui_running() and not self.stop_event.is_set():
+                # 更新 DearPyGUI
+                dpg.render_dearpygui_frame()
+                time.sleep(0.016)  # ~60fps
+        except Exception as e:
+            print(f"Error in main loop: {e}")
+        finally:
+            # 清理
+            print("Cleaning up...")
+            self.gui.shutdown()
+
+# def run_application(use_gui=False):
+#     """Run the joint analysis application."""
+#     app = JointAnalysisApp()
+#
+#     if use_gui:
+#         # 只使用DearPyGUI
+#         app.gui.start()
+#         app.gui.run()
+#     else:
+#         # 只使用Polyscope，禁用GUI更新
+#         app.use_gui = False  # 添加此标志
+#         app._register_point_clouds()
+#         app.ps_viz.setup_camera()
+#         ps.set_user_callback(app.polyscope_callback)
+#         ps.show()
+def run_application(use_gui=True):
     """Run the joint analysis application."""
+    print(f"Starting joint analysis application with GUI: {use_gui}")
     app = JointAnalysisApp()
 
-    if use_gui:
-        # 只使用DearPyGUI
-        app.gui.start()
-        app.gui.run()
-    else:
-        # 只使用Polyscope，禁用GUI更新
-        app.use_gui = False  # 添加此标志
-        app._register_point_clouds()
-        app.ps_viz.setup_camera()
-        ps.set_user_callback(app.polyscope_callback)
-        ps.show()
-
+    # 因为我们修改了run()方法来同时支持两个库，
+    # 这里就统一使用run()
+    app.use_gui = use_gui
+    app.run()
 if __name__ == "__main__":
-    run_application()
+    run_application(use_gui=True)
