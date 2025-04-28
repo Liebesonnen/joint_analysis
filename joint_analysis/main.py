@@ -1,0 +1,1152 @@
+"""
+Main application for joint analysis.
+"""
+
+import os
+import time
+import numpy as np
+import threading
+import polyscope as ps
+import polyscope.imgui as psim
+from typing import Dict, List, Optional, Callable, Any, Union
+from .core.geometry import generate_ball_joint_points, generate_hollow_cylinder
+from .core.ekf import ExtendedKalmanFilter3D
+from .core.joint_estimation import compute_joint_info_all_types
+from .viz.polyscope_viz import PolyscopeVisualizer
+from .viz.gui import JointAnalysisGUI
+from .synthetic.data_generator import SyntheticJointGenerator
+from .data.data_loader import load_numpy_sequence, load_pytorch_data, load_real_datasets
+from typing import Dict, List, Optional, Callable, Any, Union, Tuple
+from .core.geometry import rotate_points_y, rotate_points, translate_points, apply_screw_motion, rotate_points_xyz
+from .core.scoring import compute_velocity_angular_one_step_3d, compute_position_average_3d
+class JointAnalysisApp:
+    """
+    Main application for joint analysis.
+    """
+
+    def __init__(self, output_dir: str = "exported_pointclouds"):
+        """
+        Initialize the application.
+
+        Args:
+            output_dir (str): Directory to save output files
+        """
+        self.use_gui = True  # 添加此标志
+        self.output_dir = output_dir
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Initialize visualizers
+        self.ps_viz = PolyscopeVisualizer()
+        self.gui = JointAnalysisGUI()
+
+        # Define available modes
+        self.modes = [
+            "Prismatic Door", "Prismatic Door 2", "Prismatic Door 3",
+            "Revolute Door", "Revolute Door 2", "Revolute Door 3",
+            "Planar Mouse", "Planar Mouse 2", "Planar Mouse 3",
+            "Ball Joint", "Ball Joint 2", "Ball Joint 3",
+            "Screw Joint", "Screw Joint 2", "Screw Joint 3"
+        ]
+
+        # Try to load real datasets
+        self.real_data = load_real_datasets()
+        for name in self.real_data:
+            self.modes.append(name)
+
+        # Set up GUI
+        self.gui.setup_modes(self.modes)
+        self.gui.set_result_callback(self._handle_gui_result)
+
+        # Initialize synthetic data generator
+        self.synth_gen = SyntheticJointGenerator(output_dir=os.path.join(output_dir, "synthetic"))
+
+        # Current state
+        self.current_mode = "Prismatic Door"
+        self.previous_mode = None
+        self.current_best_joint = "Unknown"
+        self.current_joint_params = None
+        self.running = False
+        self.frame_count_per_mode = {m: 0 for m in self.modes}
+        self.total_frames_per_mode = {m: 50 for m in self.modes}
+
+        # For real datasets, set the actual number of frames
+        for name, data in self.real_data.items():
+            if data is not None and len(data) > 0:
+                self.total_frames_per_mode[name] = data.shape[0]
+
+        # Initialize EKF
+        dt = 0.1
+        Q = np.diag([0.01, 0.01, 0.01, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]) ** 2
+        R = np.diag([0.02, 0.02, 0.02, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]) ** 2
+        x0 = np.zeros(9)
+        P0 = np.eye(9) * 1.0
+        self.ekf_3d = ExtendedKalmanFilter3D(dt, Q, R, x0, P0)
+
+        # Analysis parameters
+        self.use_ekf_3d = True
+        self.noise_sigma = 0.000
+        self.col_sigma = 0.2
+        self.col_order = 4.0
+        self.cop_sigma = 0.2
+        self.cop_order = 4.0
+        self.rad_sigma = 0.2
+        self.rad_order = 4.0
+        self.zp_sigma = 0.2
+        self.zp_order = 4.0
+        self.prob_sigma = 0.2
+        self.prob_order = 4.0
+        self.neighbor_k = 50
+        self.use_savgol_filter = False
+        self.savgol_window_length = 10
+        self.savgol_polyorder = 2
+        self.use_multi_frame_fit = False
+        self.multi_frame_radius = 20
+
+        # Ground truth data
+        self._init_ground_truth()
+
+    def _init_ground_truth(self) -> None:
+        """Initialize ground truth data for synthetic joints."""
+        # Prismatic door ground truth
+        self.gt_data = {}
+
+        # Prismatic doors
+        self.gt_data["Prismatic Door"] = {
+            "type": "prismatic",
+            "params": {
+                "axis": np.array([1., 0., 0.]),
+                "origin": np.array([0., 0., 0.]),
+                "motion_limit": (0., 5.0)
+            }
+        }
+
+        self.gt_data["Prismatic Door 2"] = {
+            "type": "prismatic",
+            "params": {
+                "axis": np.array([0., 1., 0.]),
+                "origin": np.array([1.5, 0., 0.]),
+                "motion_limit": (0., 4.0)
+            }
+        }
+
+        self.gt_data["Prismatic Door 3"] = {
+            "type": "prismatic",
+            "params": {
+                "axis": np.array([0., 0., 1.]),
+                "origin": np.array([-1., 1., 0.]),
+                "motion_limit": (0., 3.0)
+            }
+        }
+
+        # Revolute doors
+        self.gt_data["Revolute Door"] = {
+            "type": "revolute",
+            "params": {
+                "axis": np.array([0., 1., 0.]),
+                "origin": np.array([1., 1.5, 0.]),
+                "motion_limit": (-np.pi / 4, np.pi / 4)
+            }
+        }
+
+        self.gt_data["Revolute Door 2"] = {
+            "type": "revolute",
+            "params": {
+                "axis": np.array([1., 0., 0.]),
+                "origin": np.array([0.5, 2.0, -1.0]),
+                "motion_limit": (-np.pi / 6, np.pi / 3)
+            }
+        }
+
+        self.gt_data["Revolute Door 3"] = {
+            "type": "revolute",
+            "params": {
+                "axis": np.array([1., 1., 0.]) / np.sqrt(2),
+                "origin": np.array([2.0, 1.0, 1.0]),
+                "motion_limit": (0., np.pi / 2)
+            }
+        }
+
+        # Planar mice
+        self.gt_data["Planar Mouse"] = {
+            "type": "planar",
+            "params": {
+                "normal": np.array([0., 1., 0.]),
+                "motion_limit": (-1.0, 1.0)
+            }
+        }
+
+        self.gt_data["Planar Mouse 2"] = {
+            "type": "planar",
+            "params": {
+                "normal": np.array([0., 1., 0.]),
+                "motion_limit": (-1.0, 1.0)
+            }
+        }
+
+        self.gt_data["Planar Mouse 3"] = {
+            "type": "planar",
+            "params": {
+                "normal": np.array([0., 1., 0.]),
+                "motion_limit": (-1.0, 1.0)
+            }
+        }
+
+        # Ball joints
+        self.gt_data["Ball Joint"] = {
+            "type": "ball",
+            "params": {
+                "center": np.array([0., 0., 0.]),
+                "motion_limit": (0., np.pi / 2, 0.)
+            }
+        }
+
+        self.gt_data["Ball Joint 2"] = {
+            "type": "ball",
+            "params": {
+                "center": np.array([1., 0., 0.]),
+                "motion_limit": (0., np.pi / 2, 0.)
+            }
+        }
+
+        self.gt_data["Ball Joint 3"] = {
+            "type": "ball",
+            "params": {
+                "center": np.array([1., 1., 0.]),
+                "motion_limit": (0., np.pi / 2, 0.)
+            }
+        }
+
+        # Screw joints
+        self.gt_data["Screw Joint"] = {
+            "type": "screw",
+            "params": {
+                "axis": np.array([0., 1., 0.]),
+                "origin": np.array([0., 0., 0.]),
+                "pitch": 0.5,
+                "motion_limit": (0., 2 * np.pi)
+            }
+        }
+
+        self.gt_data["Screw Joint 2"] = {
+            "type": "screw",
+            "params": {
+                "axis": np.array([1., 0., 0.]),
+                "origin": np.array([1., 0., 0.]),
+                "pitch": 0.8,
+                "motion_limit": (0., 2 * np.pi)
+            }
+        }
+
+        self.gt_data["Screw Joint 3"] = {
+            "type": "screw",
+            "params": {
+                "axis": np.array([1., 1., 0.]) / np.sqrt(2),
+                "origin": np.array([-1., 0., 1.]),
+                "pitch": 0.6,
+                "motion_limit": (0., 2 * np.pi)
+            }
+        }
+
+    def _handle_gui_result(self, result: str) -> None:
+        """
+        Handle results from the GUI.
+
+        Args:
+            result (str): Result message
+        """
+        if result == "clear_plots":
+            # Clear point cloud history and reset frame counts
+            for mode in self.modes:
+                self.frame_count_per_mode[mode] = 0
+
+    def _register_point_clouds(self) -> None:
+        """Register all synthetic and real point clouds with the visualizer."""
+        # Generate synthetic point clouds
+        # Prismatic doors
+        door_width, door_height, door_thickness = 2.0, 3.0, 0.2
+        prismatic_door_points = np.random.rand(self.synth_gen.num_points, 3)
+        prismatic_door_points[:, 0] = prismatic_door_points[:, 0] * door_width - 0.5 * door_width
+        prismatic_door_points[:, 1] = prismatic_door_points[:, 1] * door_height
+        prismatic_door_points[:, 2] = prismatic_door_points[:, 2] * door_thickness - 0.5 * door_thickness
+
+        self.ps_viz.register_point_cloud("Prismatic Door", prismatic_door_points)
+        self.ps_viz.register_point_cloud("Prismatic Door 2", prismatic_door_points + np.array([1.5, 0., 0.]),
+                                         enabled=False)
+        self.ps_viz.register_point_cloud("Prismatic Door 3", prismatic_door_points + np.array([-1., 1., 0.]),
+                                         enabled=False)
+
+        # Revolute doors (use same base geometry as prismatic doors)
+        self.ps_viz.register_point_cloud("Revolute Door", prismatic_door_points, enabled=False)
+        self.ps_viz.register_point_cloud("Revolute Door 2", prismatic_door_points + np.array([0., 0., -1.]),
+                                         enabled=False)
+        self.ps_viz.register_point_cloud("Revolute Door 3", prismatic_door_points + np.array([0., -0.5, 1.0]),
+                                         enabled=False)
+
+        # Planar mouse
+        mouse_length, mouse_width, mouse_height = 1.0, 0.6, 0.3
+        mouse_points = np.zeros((self.synth_gen.num_points, 3))
+        mouse_points[:, 0] = np.random.rand(self.synth_gen.num_points) * mouse_length - 0.5 * mouse_length
+        mouse_points[:, 2] = np.random.rand(self.synth_gen.num_points) * mouse_width - 0.5 * mouse_width
+        mouse_points[:, 1] = np.random.rand(self.synth_gen.num_points) * mouse_height
+
+        self.ps_viz.register_point_cloud("Planar Mouse", mouse_points, enabled=False)
+        self.ps_viz.register_point_cloud("Planar Mouse 2", mouse_points + np.array([1., 0., 1.]), enabled=False)
+        self.ps_viz.register_point_cloud("Planar Mouse 3", mouse_points + np.array([-1., 0., 1.]), enabled=False)
+
+        # Ball joint
+        sphere_radius = 0.3
+        rod_length = sphere_radius * 10.0
+        rod_radius = 0.05
+        ball_joint_points = generate_ball_joint_points(
+            np.array([0., 0., 0.]), sphere_radius, rod_length, rod_radius, 250, 250
+        )
+
+        self.ps_viz.register_point_cloud("Ball Joint", ball_joint_points, enabled=False)
+        self.ps_viz.register_point_cloud("Ball Joint 2",
+                                         generate_ball_joint_points(
+                                             np.array([1., 0., 0.]), sphere_radius, rod_length, rod_radius, 250, 250
+                                         ),
+                                         enabled=False)
+        self.ps_viz.register_point_cloud("Ball Joint 3",
+                                         generate_ball_joint_points(
+                                             np.array([1., 1., 0.]), sphere_radius, rod_length, rod_radius, 250, 250
+                                         ),
+                                         enabled=False)
+
+        # Screw joint
+        screw_joint_points = generate_hollow_cylinder(
+            radius=0.4, height=0.2, thickness=0.05,
+            num_points=500, cap_position="top", cap_points_ratio=0.2
+        )
+
+        self.ps_viz.register_point_cloud("Screw Joint", screw_joint_points, enabled=False)
+        self.ps_viz.register_point_cloud("Screw Joint 2", screw_joint_points + np.array([1., 0., 0.]), enabled=False)
+        self.ps_viz.register_point_cloud("Screw Joint 3", screw_joint_points + np.array([-1., 0., 1.]), enabled=False)
+
+        # Register real datasets if available
+        for name, data in self.real_data.items():
+            if data is not None and len(data) > 0:
+                self.ps_viz.register_point_cloud(name, data[0], enabled=False)
+
+    def _compute_error_for_mode(self, mode: str, param_dict: Dict[str, Dict[str, Any]]) -> Tuple[float, float]:
+        """
+        Compute position and angular errors for a given mode compared to ground truth.
+
+        Args:
+            mode (str): Mode name
+            param_dict (Dict[str, Dict[str, Any]]): Dictionary of joint parameters
+
+        Returns:
+            Tuple[float, float]: Position error, angular error
+        """
+        # For real data, we don't have ground truth
+        if mode in self.real_data:
+            return 0.0, 0.0
+
+        # Check if we have ground truth for this mode
+        if mode not in self.gt_data:
+            return 0.0, 0.0
+
+        gt_info = self.gt_data[mode]
+        gt_type = gt_info["type"]
+        gt_params = gt_info["params"]
+
+        # Check if estimated parameters include this joint type
+        if gt_type not in param_dict:
+            return 1.0, 1.0
+
+        info = param_dict[gt_type]
+
+        # Handle different joint types
+        if gt_type == "prismatic":
+            # For prismatic joints, compare axes
+            gt_axis = gt_params["axis"]
+            est_axis = info["axis"]
+
+            # Normalize axes
+            gt_axis_norm = gt_axis / np.linalg.norm(gt_axis)
+            est_axis_norm = est_axis / (np.linalg.norm(est_axis) + 1e-9)
+
+            # Angular error - angle between axes
+            dotv = np.dot(est_axis_norm, gt_axis_norm)
+            angle_err = abs(1.0 - abs(dotv))
+
+            # Position error - for prismatic joint, use origin distance
+            pos_err = np.linalg.norm(info["origin"] - gt_params["origin"]) / 5.0
+
+            return pos_err, angle_err
+
+        elif gt_type == "revolute":
+            # For revolute joints, compare axes and origins
+            gt_axis = gt_params["axis"]
+            gt_origin = gt_params["origin"]
+            est_axis = info["axis"]
+            est_origin = info["origin"]
+
+            # Normalize axes
+            gt_axis_norm = gt_axis / np.linalg.norm(gt_axis)
+            est_axis_norm = est_axis / (np.linalg.norm(est_axis) + 1e-9)
+
+            # Angular error - angle between axes
+            dotv = np.dot(est_axis_norm, gt_axis_norm)
+            angle_err = abs(1.0 - abs(dotv))
+
+            # Position error - distance between axis lines
+            d12 = gt_origin - est_origin
+            cross_ = np.cross(est_axis_norm, gt_axis_norm)
+            cross_norm = np.linalg.norm(cross_)
+
+            if cross_norm < 1e-9:
+                # Parallel axes, use perpendicular distance
+                line_dist = np.linalg.norm(np.cross(d12, gt_axis_norm))
+            else:
+                # Non-parallel axes, use distance between closest points
+                n_ = cross_ / cross_norm
+                line_dist = abs(np.dot(d12, n_))
+
+            # Normalize position error (arbitrary scale)
+            pos_err = line_dist / 2.0
+
+            return pos_err, angle_err
+
+        elif gt_type == "planar":
+            # For planar joints, compare normals
+            gt_normal = gt_params["normal"]
+            est_normal = info["normal"]
+
+            # Normalize normals
+            gt_normal_norm = gt_normal / np.linalg.norm(gt_normal)
+            est_normal_norm = est_normal / (np.linalg.norm(est_normal) + 1e-9)
+
+            # Angular error - angle between normals
+            dotv = np.dot(est_normal_norm, gt_normal_norm)
+            angle_err = abs(1.0 - abs(dotv))
+
+            # Position error - plane distance to origin
+            # This is simplified and might not be the best metric
+            pos_err = abs(np.dot(est_normal_norm, np.array([0., 0., 0.])))
+
+            return pos_err, angle_err
+
+        elif gt_type == "ball":
+            # For ball joints, compare centers
+            gt_center = gt_params["center"]
+            est_center = info["center"]
+
+            # Position error - distance between centers
+            pos_err = np.linalg.norm(est_center - gt_center) / 2.0
+
+            # No meaningful angular error for ball joints
+            angle_err = 0.0
+
+            return pos_err, angle_err
+
+        elif gt_type == "screw":
+            # For screw joints, compare axes, origins, and pitches
+            gt_axis = gt_params["axis"]
+            gt_origin = gt_params["origin"]
+            gt_pitch = gt_params["pitch"]
+
+            est_axis = info["axis"]
+            est_origin = info["origin"]
+            est_pitch = info.get("pitch", 0.0)
+
+            # Normalize axes
+            gt_axis_norm = gt_axis / np.linalg.norm(gt_axis)
+            est_axis_norm = est_axis / (np.linalg.norm(est_axis) + 1e-9)
+
+            # Angular error - angle between axes
+            dotv = np.dot(est_axis_norm, gt_axis_norm)
+            angle_err = abs(1.0 - abs(dotv))
+
+            # Position error - distance between axis lines
+            d12 = gt_origin - est_origin
+            cross_ = np.cross(est_axis_norm, gt_axis_norm)
+            cross_norm = np.linalg.norm(cross_)
+
+            if cross_norm < 1e-9:
+                # Parallel axes, use perpendicular distance
+                line_dist = np.linalg.norm(np.cross(d12, gt_axis_norm))
+            else:
+                # Non-parallel axes, use distance between closest points
+                n_ = cross_ / cross_norm
+                line_dist = abs(np.dot(d12, n_))
+
+            # Could also incorporate pitch error here
+            pitch_err = abs(est_pitch - gt_pitch) / max(abs(gt_pitch), 1e-6)
+
+            # Combine position and pitch errors
+            pos_err = (line_dist / 2.0 + pitch_err * 0.5) / 1.5
+
+            return pos_err, angle_err
+
+        return 0.0, 0.0
+
+    def update_motion_and_store(self, mode: str) -> None:
+        """
+        Update the motion for the current mode and store the frame.
+
+        Args:
+            mode (str): Mode name
+        """
+        fidx = self.frame_count_per_mode[mode]
+        limit = self.total_frames_per_mode[mode]
+
+        if fidx >= limit:
+            return
+
+        prev_points = None
+        current_points = None
+
+        # Handle real datasets
+        if mode in self.real_data and self.real_data[mode] is not None:
+            data = self.real_data[mode]
+            if fidx < data.shape[0]:
+                prev_positions = data[fidx - 1] if fidx > 0 else None
+                current_positions = data[fidx]
+                self.ps_viz.update_point_cloud(mode, current_positions)
+                self.ps_viz.store_frame(current_positions)
+                self.ps_viz.highlight_point_differences(mode, current_positions, prev_positions)
+                prev_points = prev_positions
+                current_points = current_positions
+
+        # Handle synthetic datasets
+        else:
+            # Get the original points from the generator
+            if mode == "Prismatic Door":
+                # Prismatic Door 1
+                prev_points = self.synth_gen.prismatic_door_points.copy() if fidx > 0 else None
+                pos = (fidx / (limit - 1)) * 5.0
+                current_points = self.synth_gen.prismatic_door_points.copy()
+                current_points = translate_points(current_points, pos, np.array([1., 0., 0.]))
+
+                if self.noise_sigma > 1e-6:
+                    current_points += np.random.normal(0, self.noise_sigma, current_points.shape)
+
+                self.ps_viz.update_point_cloud(mode, current_points)
+                self.ps_viz.store_frame(current_points)
+                self.ps_viz.highlight_point_differences(mode, current_points, prev_points)
+
+            elif mode == "Prismatic Door 2":
+                prev_points = self.synth_gen.prismatic_door_points_2.copy() if fidx > 0 else None
+                pos = (fidx / (limit - 1)) * 4.0
+                current_points = self.synth_gen.prismatic_door_points_2.copy()
+                current_points = translate_points(current_points, pos, np.array([0., 1., 0.]))
+
+                if self.noise_sigma > 1e-6:
+                    current_points += np.random.normal(0, self.noise_sigma, current_points.shape)
+
+                self.ps_viz.update_point_cloud(mode, current_points)
+                self.ps_viz.store_frame(current_points)
+                self.ps_viz.highlight_point_differences(mode, current_points, prev_points)
+
+            elif mode == "Prismatic Door 3":
+                prev_points = self.synth_gen.prismatic_door_points_3.copy() if fidx > 0 else None
+                pos = (fidx / (limit - 1)) * 3.0
+                current_points = self.synth_gen.prismatic_door_points_3.copy()
+                current_points = translate_points(current_points, pos, np.array([0., 0., 1.]))
+
+                if self.noise_sigma > 1e-6:
+                    current_points += np.random.normal(0, self.noise_sigma, current_points.shape)
+
+                self.ps_viz.update_point_cloud(mode, current_points)
+                self.ps_viz.store_frame(current_points)
+                self.ps_viz.highlight_point_differences(mode, current_points, prev_points)
+
+            elif mode == "Revolute Door":
+                prev_points = self.synth_gen.revolute_door_points.copy() if fidx > 0 else None
+                angle_min = -np.pi / 4
+                angle_max = np.pi / 4
+                angle = angle_min + (angle_max - angle_min) * (fidx / (limit - 1))
+                current_points = self.synth_gen.revolute_door_points.copy()
+                current_points = rotate_points(
+                    current_points, angle, np.array([0., 1., 0.]), np.array([1., 1.5, 0.])
+                )
+
+                if self.noise_sigma > 1e-6:
+                    current_points += np.random.normal(0, self.noise_sigma, current_points.shape)
+
+                self.ps_viz.update_point_cloud(mode, current_points)
+                self.ps_viz.store_frame(current_points)
+                self.ps_viz.highlight_point_differences(mode, current_points, prev_points)
+
+            elif mode == "Revolute Door 2":
+                prev_points = self.synth_gen.revolute_door_points_2.copy() if fidx > 0 else None
+                angle_min = -np.pi / 6
+                angle_max = np.pi / 3
+                angle = angle_min + (angle_max - angle_min) * (fidx / (limit - 1))
+                current_points = self.synth_gen.revolute_door_points_2.copy()
+                current_points = rotate_points(
+                    current_points, angle, np.array([1., 0., 0.]), np.array([0.5, 2.0, -1.0])
+                )
+
+                if self.noise_sigma > 1e-6:
+                    current_points += np.random.normal(0, self.noise_sigma, current_points.shape)
+
+                self.ps_viz.update_point_cloud(mode, current_points)
+                self.ps_viz.store_frame(current_points)
+                self.ps_viz.highlight_point_differences(mode, current_points, prev_points)
+
+            elif mode == "Revolute Door 3":
+                prev_points = self.synth_gen.revolute_door_points_3.copy() if fidx > 0 else None
+                angle_min = 0.0
+                angle_max = np.pi / 2
+                angle = angle_min + (angle_max - angle_min) * (fidx / (limit - 1))
+                current_points = self.synth_gen.revolute_door_points_3.copy()
+                current_points = rotate_points(
+                    current_points, angle, np.array([1., 1., 0.]) / np.sqrt(2), np.array([2.0, 1.0, 1.0])
+                )
+
+                if self.noise_sigma > 1e-6:
+                    current_points += np.random.normal(0, self.noise_sigma, current_points.shape)
+
+                self.ps_viz.update_point_cloud(mode, current_points)
+                self.ps_viz.store_frame(current_points)
+                self.ps_viz.highlight_point_differences(mode, current_points, prev_points)
+
+            elif mode == "Planar Mouse":
+                prev_points = self.synth_gen.planar_mouse_points.copy() if fidx > 0 else None
+                current_points = self.synth_gen.planar_mouse_points.copy()
+
+                if fidx < limit // 2:
+                    # First half: translation
+                    alpha = fidx / (limit // 2 - 1) if limit // 2 > 1 else 0
+                    tx = -1.0 + alpha * (0.0 - (-1.0))
+                    tz = 1.0 + alpha * (0.0 - 1.0)
+                    ry = 0.0
+                    current_points += np.array([tx, 0., tz])
+                    current_points = rotate_points_y(current_points, ry, [0., 0., 0.])
+                else:
+                    # Second half: rotation and translation
+                    alpha = (fidx - limit // 2) / (limit - limit // 2 - 1) if (limit - limit // 2 - 1) > 0 else 0
+                    ry = np.radians(40.0) * alpha
+                    tx = alpha * 1.0
+                    tz = alpha * (-1.0)
+                    current_points += np.array([tx, 0., tz])
+                    current_points = rotate_points_y(current_points, ry, [0., 0., 0.])
+
+                if self.noise_sigma > 1e-6:
+                    current_points += np.random.normal(0, self.noise_sigma, current_points.shape)
+
+                self.ps_viz.update_point_cloud(mode, current_points)
+                self.ps_viz.store_frame(current_points)
+                self.ps_viz.highlight_point_differences(mode, current_points, prev_points)
+
+            elif mode == "Planar Mouse 2":
+                prev_points = self.synth_gen.planar_mouse_points_2.copy() if fidx > 0 else None
+
+                if fidx < limit // 2:
+                    # First half: translation
+                    alpha = fidx / (limit // 2 - 1) if limit // 2 > 1 else 0
+                    dy = alpha * 1.0
+                    dz = alpha * 1.0
+                    current_points = self.synth_gen.planar_mouse_points_2.copy()
+                    current_points += np.array([0., dy, dz])
+                else:
+                    # Second half: rotation and translation
+                    alpha = (fidx - limit // 2) / (limit - limit // 2 - 1) if (limit - limit // 2 - 1) > 0 else 0
+                    mp = self.synth_gen.planar_mouse_points_2.copy()
+                    mp += np.array([0., 1.0, 1.0])
+                    rx = np.radians(30.0) * alpha
+                    current_points = rotate_points(
+                        mp, rx, np.array([1.0, 0., 0.]), np.array([0., 1.0, 1.0])
+                    )
+
+                    dy = alpha * 1.0
+                    dz = alpha * 0.5
+                    current_points += np.array([0., dy, dz])
+
+                if self.noise_sigma > 1e-6:
+                    current_points += np.random.normal(0, self.noise_sigma, current_points.shape)
+
+                self.ps_viz.update_point_cloud(mode, current_points)
+                self.ps_viz.store_frame(current_points)
+                self.ps_viz.highlight_point_differences(mode, current_points, prev_points)
+
+            elif mode == "Planar Mouse 3":
+                prev_points = self.synth_gen.planar_mouse_points_3.copy() if fidx > 0 else None
+
+                if fidx < limit // 2:
+                    # First half: translation
+                    alpha = fidx / (limit // 2 - 1) if limit // 2 > 1 else 0
+                    dx = alpha * 1.0
+                    dz = alpha * 0.5
+                    current_points = self.synth_gen.planar_mouse_points_3.copy()
+                    current_points += np.array([dx, 0., dz])
+                else:
+                    # Second half: rotation and translation
+                    alpha = (fidx - limit // 2) / (limit - limit // 2 - 1) if (limit - limit // 2 - 1) > 0 else 0
+                    mp = self.synth_gen.planar_mouse_points_3.copy()
+                    mp += np.array([1.0, 0., 0.5])
+                    ry = np.radians(30.0) * alpha
+                    current_points = rotate_points(
+                        mp, ry, np.array([0., 1., 0.]), np.array([1.0, 0., 0.5])
+                    )
+
+                    dx = alpha * 1.0
+                    dz = alpha * 0.5
+                    current_points += np.array([dx, 0., dz])
+
+                if self.noise_sigma > 1e-6:
+                    current_points += np.random.normal(0, self.noise_sigma, current_points.shape)
+
+                self.ps_viz.update_point_cloud(mode, current_points)
+                self.ps_viz.store_frame(current_points)
+                self.ps_viz.highlight_point_differences(mode, current_points, prev_points)
+
+            elif mode == "Ball Joint":
+                prev_points = self.synth_gen.ball_joint_points.copy() if fidx > 0 else None
+
+                if fidx < limit // 3:
+                    alpha = fidx / (limit // 3 - 1) if limit // 3 > 1 else 0
+                    ax = np.radians(60.0) * alpha
+                    ay = 0.0
+                    az = 0.0
+                elif fidx < 2 * limit // 3:
+                    alpha = (fidx - limit // 3) / (limit // 3 - 1) if limit // 3 > 1 else 0
+                    ax = np.radians(60.0)
+                    ay = np.radians(40.0) * alpha
+                    az = 0.0
+                else:
+                    alpha = (fidx - 2 * limit // 3) / (limit - 2 * limit // 3 - 1) if (
+                                                                                                  limit - 2 * limit // 3 - 1) > 0 else 0
+                    ax = np.radians(60.0)
+                    ay = np.radians(40.0)
+                    az = np.radians(70.0) * alpha
+
+                current_points = self.synth_gen.ball_joint_points.copy()
+                current_points = rotate_points_xyz(
+                    current_points, ax, ay, az, np.array([0., 0., 0.])
+                )
+
+                if self.noise_sigma > 1e-6:
+                    current_points += np.random.normal(0, self.noise_sigma, current_points.shape)
+
+                self.ps_viz.update_point_cloud(mode, current_points)
+                self.ps_viz.store_frame(current_points)
+                self.ps_viz.highlight_point_differences(mode, current_points, prev_points)
+
+            elif mode == "Ball Joint 2":
+                prev_points = self.synth_gen.ball_joint_points_2.copy() if fidx > 0 else None
+
+                if fidx < limit // 2:
+                    alpha = fidx / (limit // 2 - 1) if limit // 2 > 1 else 0
+                    rx = np.radians(50.0) * alpha
+                    ry = np.radians(10.0) * alpha
+                    rz = 0.0
+                else:
+                    alpha = (fidx - limit // 2) / (limit - limit // 2 - 1) if (limit - limit // 2 - 1) > 0 else 0
+                    rx = np.radians(50.0)
+                    ry = np.radians(10.0)
+                    rz = np.radians(45.0) * alpha
+
+                current_points = self.synth_gen.ball_joint_points_2.copy()
+                current_points = rotate_points_xyz(
+                    current_points, rx, ry, rz, np.array([1., 0., 0.])
+                )
+
+                if self.noise_sigma > 1e-6:
+                    current_points += np.random.normal(0, self.noise_sigma, current_points.shape)
+
+                self.ps_viz.update_point_cloud(mode, current_points)
+                self.ps_viz.store_frame(current_points)
+                self.ps_viz.highlight_point_differences(mode, current_points, prev_points)
+
+            elif mode == "Ball Joint 3":
+                prev_points = self.synth_gen.ball_joint_points_3.copy() if fidx > 0 else None
+
+                if fidx < limit // 3:
+                    alpha = fidx / (limit // 3 - 1) if limit // 3 > 1 else 0
+                    ax = np.radians(30.0) * alpha
+                    ay = 0.0
+                    az = 0.0
+                elif fidx < 2 * limit // 3:
+                    alpha = (fidx - limit // 3) / (limit // 3 - 1) if limit // 3 > 1 else 0
+                    ax = np.radians(30.0)
+                    ay = np.radians(50.0) * alpha
+                    az = 0.0
+                else:
+                    alpha = (fidx - 2 * limit // 3) / (limit - 2 * limit // 3 - 1) if (
+                                                                                                  limit - 2 * limit // 3 - 1) > 0 else 0
+                    ax = np.radians(30.0)
+                    ay = np.radians(50.0)
+                    az = np.radians(80.0) * alpha
+
+                current_points = self.synth_gen.ball_joint_points_3.copy()
+                current_points = rotate_points_xyz(
+                    current_points, ax, ay, az, np.array([1., 1., 0.])
+                )
+
+                if self.noise_sigma > 1e-6:
+                    current_points += np.random.normal(0, self.noise_sigma, current_points.shape)
+
+                self.ps_viz.update_point_cloud(mode, current_points)
+                self.ps_viz.store_frame(current_points)
+                self.ps_viz.highlight_point_differences(mode, current_points, prev_points)
+
+            elif mode == "Screw Joint":
+                prev_points = self.synth_gen.screw_joint_points.copy() if fidx > 0 else None
+                angle = 2 * np.pi * (fidx / (limit - 1))
+                current_points = self.synth_gen.screw_joint_points.copy()
+                current_points = apply_screw_motion(
+                    current_points, angle, np.array([0., 1., 0.]), np.array([0., 0., 0.]), 0.5
+                )
+
+                if self.noise_sigma > 1e-6:
+                    current_points += np.random.normal(0, self.noise_sigma, current_points.shape)
+
+                self.ps_viz.update_point_cloud(mode, current_points)
+                self.ps_viz.store_frame(current_points)
+                self.ps_viz.highlight_point_differences(mode, current_points, prev_points)
+
+            elif mode == "Screw Joint 2":
+                prev_points = self.synth_gen.screw_joint_points_2.copy() if fidx > 0 else None
+                angle = 2 * np.pi * (fidx / (limit - 1))
+                current_points = self.synth_gen.screw_joint_points_2.copy()
+                current_points = apply_screw_motion(
+                    current_points, angle, np.array([1., 0., 0.]), np.array([1., 0., 0.]), 0.8
+                )
+
+                if self.noise_sigma > 1e-6:
+                    current_points += np.random.normal(0, self.noise_sigma, current_points.shape)
+
+                self.ps_viz.update_point_cloud(mode, current_points)
+                self.ps_viz.store_frame(current_points)
+                self.ps_viz.highlight_point_differences(mode, current_points, prev_points)
+
+            elif mode == "Screw Joint 3":
+                prev_points = self.synth_gen.screw_joint_points_3.copy() if fidx > 0 else None
+                angle = 2 * np.pi * (fidx / (limit - 1))
+                current_points = self.synth_gen.screw_joint_points_3.copy()
+                current_points = apply_screw_motion(
+                    current_points, angle, np.array([1., 1., 0.]) / np.sqrt(2), np.array([-1., 0., 1.]), 0.6
+                )
+
+                if self.noise_sigma > 1e-6:
+                    current_points += np.random.normal(0, self.noise_sigma, current_points.shape)
+
+                self.ps_viz.update_point_cloud(mode, current_points)
+                self.ps_viz.store_frame(current_points)
+                self.ps_viz.highlight_point_differences(mode, current_points, prev_points)
+
+        # Increment frame counter
+        self.frame_count_per_mode[mode] += 1
+
+        # Apply EKF if we have at least 2 frames
+        if fidx > 0 and current_points is not None and prev_points is not None:
+            # Compute linear and angular velocities
+            v_meas_3d, w_meas_3d = compute_velocity_angular_one_step_3d(
+                prev_points, current_points, dt=0.1, num_neighbors=self.neighbor_k
+            )
+
+            # Compute average position
+            p_meas_3d = compute_position_average_3d(current_points)  # (3,)
+
+            # Assemble measurement vector
+            z = np.concatenate([p_meas_3d, v_meas_3d, w_meas_3d], axis=0)
+
+            if self.use_ekf_3d:
+                # EKF predict + update
+                self.ekf_3d.predict()
+                self.ekf_3d.update(z)
+                vx_est = self.ekf_3d.x[3]
+                vy_est = self.ekf_3d.x[4]
+                vz_est = self.ekf_3d.x[5]
+                wx_est = self.ekf_3d.x[6]
+                wy_est = self.ekf_3d.x[7]
+                wz_est = self.ekf_3d.x[8]
+                vel_mag = np.sqrt(vx_est * vx_est + vy_est * vy_est + vz_est * vz_est)
+                ang_mag = np.sqrt(wx_est * wx_est + wy_est * wy_est + wz_est * wz_est)
+            else:
+                # Direct measurement
+                vel_mag = np.linalg.norm(v_meas_3d)
+                ang_mag = np.linalg.norm(w_meas_3d)
+
+            # Update GUI with velocity data
+            if self.use_gui and self.gui:
+                self.gui.add_velocity_data(mode, vel_mag, ang_mag)
+            self.gui.add_velocity_data(mode, vel_mag, ang_mag)
+
+            # Run joint type estimation if we have a sequence
+            sequence = self.ps_viz.get_point_cloud_sequence()
+            if sequence is not None and sequence.shape[0] >= 2:
+                # Run joint estimation
+                param_dict, best_type, scores_info = compute_joint_info_all_types(
+                    sequence,
+                    neighbor_k=self.neighbor_k,
+                    col_sigma=self.col_sigma, col_order=self.col_order,
+                    cop_sigma=self.cop_sigma, cop_order=self.cop_order,
+                    rad_sigma=self.rad_sigma, rad_order=self.rad_order,
+                    zp_sigma=self.zp_sigma, zp_order=self.zp_order,
+                    prob_sigma=self.prob_sigma, prob_order=self.prob_order,
+                    use_savgol=self.use_savgol_filter,
+                    savgol_window=self.savgol_window_length,
+                    savgol_poly=self.savgol_polyorder,
+                    use_multi_frame=self.use_multi_frame_fit,
+                    multi_frame_window_radius=self.multi_frame_radius
+                )
+
+                # Update current best joint
+                self.current_best_joint = best_type
+
+                if best_type in param_dict:
+                    self.current_joint_params = param_dict[best_type]
+
+                    # Update joint visualization
+                    self.ps_viz.set_joint_estimation_result(best_type, param_dict[best_type])
+
+                    # Show ground truth for comparison (for synthetic data)
+                    if mode in self.gt_data:
+                        gt_info = self.gt_data[mode]
+                        self.ps_viz.show_ground_truth(gt_info["type"], gt_info["params"])
+
+                # Compute errors compared to ground truth
+                pos_err, ang_err = self._compute_error_for_mode(mode, param_dict)
+
+                # Update GUI with analysis results
+                if self.use_gui and self.gui:
+                    self.gui.add_velocity_data(mode, vel_mag, ang_mag)
+                if scores_info is not None:
+                    # Prepare analysis data for GUI
+                    analysis_data = {
+                        "basic_score_avg": scores_info["basic_score_avg"],
+                        "joint_probs": scores_info["joint_probs"],
+                        "position_error": pos_err,
+                        "angular_error": ang_err
+                    }
+
+                    self.gui.add_analysis_results(mode, analysis_data)
+        else:
+            # First frame, zero velocity
+            self.gui.add_velocity_data(mode, 0.0, 0.0)
+
+    def polyscope_callback(self) -> None:
+        """Callback function for the Polyscope UI."""
+        # Mode selection
+        changed = psim.BeginCombo("Object Mode", self.current_mode)
+        if changed:
+            for mode in self.modes:
+                _, selected = psim.Selectable(mode, self.current_mode == mode)
+                if selected and mode != self.current_mode:
+                    # Remove joint visualization
+                    self.ps_viz.remove_joint_visualization()
+
+                    # Set current mode
+                    self.previous_mode = self.current_mode
+                    self.current_mode = mode
+                    self.ps_viz.set_current_mode(mode)
+
+                    # Reset frame index
+                    self.frame_count_per_mode[mode] = 0
+
+                    # Show ground truth if available
+                    if mode in self.gt_data:
+                        gt_info = self.gt_data[mode]
+                        self.ps_viz.show_ground_truth(gt_info["type"], gt_info["params"])
+            psim.EndCombo()
+
+        psim.Separator()
+
+        # Parameters UI
+        if psim.TreeNodeEx("Noise & Analysis Parameters", flags=psim.ImGuiTreeNodeFlags_DefaultOpen):
+            psim.Columns(2, "mycolumns", False)
+            psim.SetColumnWidth(0, 230)
+
+            # Neighbor K
+            changed_k, new_k = psim.InputInt("Neighbor K", self.neighbor_k, 10)
+            if changed_k:
+                self.neighbor_k = max(1, new_k)
+
+            # Noise sigma
+            changed_noise, new_noise_sigma = psim.InputFloat("Noise Sigma", self.noise_sigma, 0.001)
+            if changed_noise:
+                self.noise_sigma = max(0.0, new_noise_sigma)
+
+            # Score parameters
+            changed_col_sigma, new_cs = psim.InputFloat("col_sigma", self.col_sigma, 0.001)
+            if changed_col_sigma:
+                self.col_sigma = max(1e-6, new_cs)
+
+            changed_col_order, new_co = psim.InputFloat("col_order", self.col_order, 0.1)
+            if changed_col_order:
+                self.col_order = max(0.1, new_co)
+
+            changed_cop_sigma, new_cops = psim.InputFloat("cop_sigma", self.cop_sigma, 0.001)
+            if changed_cop_sigma:
+                self.cop_sigma = max(1e-6, new_cops)
+
+            changed_cop_order, new_copo = psim.InputFloat("cop_order", self.cop_order, 0.1)
+            if changed_cop_order:
+                self.cop_order = max(0.1, new_copo)
+
+            changed_rad_sigma, new_rs = psim.InputFloat("rad_sigma", self.rad_sigma, 0.001)
+            if changed_rad_sigma:
+                self.rad_sigma = max(1e-6, new_rs)
+
+            changed_rad_order, new_ro = psim.InputFloat("rad_order", self.rad_order, 0.1)
+            if changed_rad_order:
+                self.rad_order = max(0.1, new_ro)
+
+            changed_zp_sigma, new_zs = psim.InputFloat("zp_sigma", self.zp_sigma, 0.001)
+            if changed_zp_sigma:
+                self.zp_sigma = max(1e-6, new_zs)
+
+            changed_zp_order, new_zo = psim.InputFloat("zp_order", self.zp_order, 0.1)
+            if changed_zp_order:
+                self.zp_order = max(0.1, new_zo)
+
+            changed_prob_sigma, new_ps = psim.InputFloat("prob_sigma", self.prob_sigma, 0.001)
+            if changed_prob_sigma:
+                self.prob_sigma = max(1e-6, new_ps)
+
+            changed_prob_order, new_po = psim.InputFloat("prob_order", self.prob_order, 0.1)
+            if changed_prob_order:
+                self.prob_order = max(0.1, new_po)
+
+            psim.NextColumn()
+
+            # Filter parameters
+            changed_sg_win, new_sg_win = psim.InputInt("SG Window", self.savgol_window_length, 1)
+            if changed_sg_win:
+                self.savgol_window_length = max(3, new_sg_win)
+
+            changed_sg_poly, new_sg_poly = psim.InputInt("SG PolyOrder", self.savgol_polyorder, 1)
+            if changed_sg_poly:
+                self.savgol_polyorder = max(1, new_sg_poly)
+
+            _, use_sg_filter_new = psim.Checkbox("Use SG Filter?", self.use_savgol_filter)
+            if use_sg_filter_new != self.use_savgol_filter:
+                self.use_savgol_filter = use_sg_filter_new
+
+            _, use_mf_new = psim.Checkbox("Use Multi-Frame Fit?", self.use_multi_frame_fit)
+            if use_mf_new != self.use_multi_frame_fit:
+                self.use_multi_frame_fit = use_mf_new
+
+            changed_mfr, new_mfr = psim.InputInt("MultiFrame Radius", self.multi_frame_radius, 1)
+            if changed_mfr:
+                self.multi_frame_radius = max(1, new_mfr)
+
+            _, use_ekf_new = psim.Checkbox("Use EKF?", self.use_ekf_3d)
+            if use_ekf_new != self.use_ekf_3d:
+                self.use_ekf_3d = use_ekf_new
+
+            psim.Columns(1)
+            psim.TreePop()
+
+        psim.Separator()
+
+        # Control buttons
+        if psim.Button("Start"):
+            self.frame_count_per_mode[self.current_mode] = 0
+            self.running = True
+
+        psim.SameLine()
+
+        if psim.Button("Stop"):
+            self.running = False
+
+        psim.SameLine()
+
+        if psim.Button("Save .npy"):
+            filepath = self.ps_viz.save_sequence(self.output_dir)
+            if filepath:
+                psim.TextUnformatted(f"Saved to: {filepath}")
+
+        # Update motion when running
+        if self.running:
+            limit = self.total_frames_per_mode[self.current_mode]
+            if self.frame_count_per_mode[self.current_mode] < limit:
+                self.update_motion_and_store(self.current_mode)
+            else:
+                self.running = False
+
+        # Display current joint info
+        psim.Separator()
+
+        psim.TextUnformatted(f"Current Mode: {self.current_mode}")
+        psim.TextUnformatted(
+            f"Frame: {self.frame_count_per_mode[self.current_mode]} / {self.total_frames_per_mode[self.current_mode]}")
+
+        # Get sequence for analysis
+        sequence = self.ps_viz.get_point_cloud_sequence()
+        if sequence is not None and sequence.shape[0] >= 2:
+            psim.TextUnformatted(f"Sequence Size: {sequence.shape[0]} frames, {sequence.shape[1]} points")
+            psim.TextUnformatted(f"Best Joint Type: {self.current_best_joint}")
+
+            # Display joint parameters
+            if self.current_best_joint in ["planar", "ball", "screw", "prismatic",
+                                           "revolute"] and self.current_joint_params is not None:
+                if self.current_best_joint == "planar":
+                    n_ = self.current_joint_params["normal"]
+                    lim = self.current_joint_params["motion_limit"]
+                    psim.TextUnformatted(f"  Normal=({n_[0]:.2f}, {n_[1]:.2f}, {n_[2]:.2f})")
+                    psim.TextUnformatted(f"  MotionLimit=({lim[0]:.2f}, {lim[1]:.2f})")
+
+                elif self.current_best_joint == "ball":
+                    c_ = self.current_joint_params["center"]
+                    lim = self.current_joint_params["motion_limit"]
+                    psim.TextUnformatted(f"  Center=({c_[0]:.2f}, {c_[1]:.2f}, {c_[2]:.2f})")
+                    psim.TextUnformatted(f"  MotionLimit=Rx:{lim[0]:.2f}, Ry:{lim[1]:.2f}, Rz:{lim[2]:.2f}")
+
+                elif self.current_best_joint == "screw":
+                    a_ = self.current_joint_params["axis"]
+                    o_ = self.current_joint_params["origin"]
+                    p_ = self.current_joint_params["pitch"]
+                    lim = self.current_joint_params["motion_limit"]
+                    psim.TextUnformatted(f"  Axis=({a_[0]:.2f}, {a_[1]:.2f}, {a_[2]:.2f}), pitch={p_:.3f}")
+                    psim.TextUnformatted(f"  Origin=({o_[0]:.2f}, {o_[1]:.2f}, {o_[2]:.2f})")
+                    psim.TextUnformatted(f"  MotionLimit=({lim[0]:.2f} rad, {lim[1]:.2f} rad)")
+
+                elif self.current_best_joint == "prismatic":
+                    a_ = self.current_joint_params["axis"]
+                    lim = self.current_joint_params["motion_limit"]
+                    psim.TextUnformatted(f"  Axis=({a_[0]:.2f}, {a_[1]:.2f}, {a_[2]:.2f})")
+                    psim.TextUnformatted(f"  MotionLimit=({lim[0]:.2f}, {lim[1]:.2f})")
+
+                elif self.current_best_joint == "revolute":
+                    a_ = self.current_joint_params["axis"]
+                    o_ = self.current_joint_params["origin"]
+                    lim = self.current_joint_params["motion_limit"]
+                    psim.TextUnformatted(f"  Axis=({a_[0]:.2f}, {a_[1]:.2f}, {a_[2]:.2f})")
+                    psim.TextUnformatted(f"  Origin=({o_[0]:.2f}, {o_[1]:.2f}, {o_[2]:.2f})")
+                    psim.TextUnformatted(f"  MotionLimit=({lim[0]:.2f} rad, {lim[1]:.2f} rad)")
+        else:
+            psim.TextUnformatted("Not enough frames to do joint classification.")
+
+    def run(self) -> None:
+        """Run the application."""
+        # Register point clouds
+        self._register_point_clouds()
+
+        # Start GUI in a thread
+        gui_thread = self.gui.start_in_thread()
+
+        # Set up the Polyscope callback
+        self.ps_viz.setup_camera()
+        ps.set_user_callback(self.polyscope_callback)
+
+        # Show the Polyscope window
+        ps.show()
+
+        # Clean up
+        self.gui.shutdown()
+
+
+def run_application(use_gui=False):
+    """Run the joint analysis application."""
+    app = JointAnalysisApp()
+
+    if use_gui:
+        # 只使用DearPyGUI
+        app.gui.start()
+        app.gui.run()
+    else:
+        # 只使用Polyscope，禁用GUI更新
+        app.use_gui = False  # 添加此标志
+        app._register_point_clouds()
+        app.ps_viz.setup_camera()
+        ps.set_user_callback(app.polyscope_callback)
+        ps.show()
+
+if __name__ == "__main__":
+    run_application()
