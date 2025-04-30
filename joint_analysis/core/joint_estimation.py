@@ -371,9 +371,11 @@ def compute_planar_info(all_points_history, v_history, omega_history, w_i, devic
         ref = y_axis if dot_x < dot_y else x_axis
 
         # Compute orthogonal vectors
-        axis1_ = torch.cross(normal_, ref)
+        axis1_ = torch.linalg.cross(normal_, ref)
+        # axis1_ = torch.cross(normal_, ref)
         axis1_ = normalize_vector_torch(axis1_.unsqueeze(0))[0]
-        axis2_ = torch.cross(normal_, axis1_)
+        axis2_ = torch.linalg.cross(normal_, axis1_)
+        # axis2_ = torch.cross(normal_, axis1_)
         axis2_ = normalize_vector_torch(axis2_.unsqueeze(0))[0]
 
         # Project onto principal axes
@@ -674,7 +676,8 @@ def compute_screw_info(all_points_history, v_history, omega_history, w_i, device
             perp1 = torch.tensor([axis_dir[2], 0., -axis_dir[0]], device=device)
 
         perp1 = normalize_vector_torch(perp1.unsqueeze(0))[0]
-        perp2 = torch.cross(axis_dir, perp1)
+        # perp2 = torch.cross(axis_dir, perp1)
+        perp2 = torch.linalg.cross(axis_dir, perp1)
 
         # Project to plane (calculate 2D coordinates)
         proj1 = torch.matmul(origin_candidates, perp1)  # (K)
@@ -1343,21 +1346,24 @@ def compute_revolute_info(all_points_history, v_history, omega_history, w_i, dev
     }
 
 
-
 def compute_joint_info_all_types(
         all_points_history,
         neighbor_k=400,
-        col_sigma=0.3, col_order=3.0,
-        cop_sigma=0.3, cop_order=3.0,
-        rad_sigma=0.3, rad_order=3.0,
-        zp_sigma=0.3, zp_order=3.0,
-        prob_sigma=0.3, prob_order=3.0,
+        col_sigma=0.2, col_order=4.0,
+        cop_sigma=0.2, cop_order=4.0,
+        rad_sigma=0.2, rad_order=4.0,
+        zp_sigma=0.2, zp_order=4.0,
+        prob_sigma=0.2, prob_order=4.0,
+        prismatic_sigma=0.08, prismatic_order=5.0,
+        planar_sigma=0.12, planar_order=4.0,
+        revolute_sigma=0.08, revolute_order=5.0,
+        screw_sigma=0.15, screw_order=4.0,
+        ball_sigma=0.12, ball_order=4.0,
         use_savgol=True,
-        savgol_window=7,
-        savgol_poly=3,
-        use_multi_frame=True,
-        multi_frame_window_radius=5,
-        confidence_threshold=0.1
+        savgol_window=3,
+        savgol_poly=2,
+        use_multi_frame=False,
+        multi_frame_window_radius=10
 ):
     """
     Main entry for joint type estimation:
@@ -1377,14 +1383,23 @@ def compute_joint_info_all_types(
         rad_order (float): Order parameter for radius consistency score
         zp_sigma (float): Width parameter for zero pitch score
         zp_order (float): Order parameter for zero pitch score
-        prob_sigma (float): Width parameter for probability function
-        prob_order (float): Order parameter for probability function
+        prob_sigma (float): Default width parameter for probability function
+        prob_order (float): Default order parameter for probability function
+        prismatic_sigma (float): Width parameter for prismatic joint
+        prismatic_order (float): Order parameter for prismatic joint
+        planar_sigma (float): Width parameter for planar joint
+        planar_order (float): Order parameter for planar joint
+        revolute_sigma (float): Width parameter for revolute joint
+        revolute_order (float): Order parameter for revolute joint
+        screw_sigma (float): Width parameter for screw joint
+        screw_order (float): Order parameter for screw joint
+        ball_sigma (float): Width parameter for ball joint
+        ball_order (float): Order parameter for ball joint
         use_savgol (bool): Whether to apply Savitzky-Golay filtering
         savgol_window (int): Window size for Savitzky-Golay filter
         savgol_poly (int): Polynomial order for Savitzky-Golay filter
         use_multi_frame (bool): Whether to use multi-frame rigid fitting
         multi_frame_window_radius (int): Radius for multi-frame fitting
-        confidence_threshold (float): Threshold for joint type confidence
 
     Returns:
         tuple: (joint_params_dict, best_joint, info_dict)
@@ -1405,13 +1420,10 @@ def compute_joint_info_all_types(
         }
         return ret, "Unknown", None
 
-    # Ensure contiguous memory layout for point cloud data
-    all_points_history_contiguous = np.ascontiguousarray(all_points_history)
-
     # Compute velocities
     dt = 0.1
     v_arr, w_arr = calculate_velocity_and_angular_velocity_for_all_frames(
-        all_points_history_contiguous,
+        all_points_history,
         dt=dt,
         num_neighbors=neighbor_k,
         use_savgol=use_savgol,
@@ -1432,29 +1444,33 @@ def compute_joint_info_all_types(
         }
         return ret, "Unknown", None
 
-    # Vectorized calculation of motion significance for weights
-    v_tensor = torch.tensor(v_arr, device=device)
-    w_tensor = torch.tensor(w_arr, device=device)
+    # Compute motion salience
+    ms_torch = compute_motion_salience_batch(all_points_history, neighbor_k=neighbor_k, device=device)
+    ms = ms_torch.cpu().numpy()
 
-    # Calculate absolute values
-    v_abs = torch.abs(v_tensor)
-    w_abs = torch.abs(w_tensor)
-
-    # Calculate total motion magnitude
-    motion_magnitude = torch.mean(v_abs, dim=0) + torch.mean(w_abs, dim=0)  # (N, 3)
-    motion_magnitude = torch.mean(motion_magnitude, dim=1)  # (N)
-
-    # Normalize to weights
-    sum_motion = torch.sum(motion_magnitude)
-    if sum_motion < 1e-6:
-        w_i = torch.ones_like(motion_magnitude) / motion_magnitude.shape[0]
+    # Normalize motion salience to get weights
+    sum_ms = ms.sum()
+    if sum_ms < 1e-6:
+        w_i = np.ones_like(ms) / ms.shape[0]
     else:
-        w_i = motion_magnitude / sum_motion
+        w_i = ms / sum_ms
 
-    # Convert to numpy for compatibility with other functions
-    w_i_np = w_i.cpu().numpy()
+    # Compute joint parameters for each type
+    p_info = compute_planar_info(all_points_history, v_arr, w_arr, w_i, device=device)
+    b_info = compute_ball_info(all_points_history, v_arr, w_arr, w_i, device=device)
+    s_info = compute_screw_info(all_points_history, v_arr, w_arr, w_i, device=device)
+    pm_info = compute_prismatic_info(all_points_history, v_arr, w_arr, w_i, device=device)
+    r_info = compute_revolute_info(all_points_history, v_arr, w_arr, w_i, device=device)
 
-    # Compute basic scores - using improved score calculation
+    ret = {
+        "planar": p_info,
+        "ball": b_info,
+        "screw": s_info,
+        "prismatic": pm_info,
+        "revolute": r_info
+    }
+
+    # Compute basic scores
     col, cop, rad, zp = compute_basic_scores(
         v_arr, w_arr, device=device,
         col_sigma=col_sigma, col_order=col_order,
@@ -1463,8 +1479,8 @@ def compute_joint_info_all_types(
         zp_sigma=zp_sigma, zp_order=zp_order
     )
 
-    # Calculate weighted averages
-    w_t = w_i
+    # Compute weighted averages
+    w_t = torch.tensor(w_i, dtype=torch.float32, device=device)
     col_mean = float(torch.sum(w_t * col).item())
     cop_mean = float(torch.sum(w_t * cop).item())
     rad_mean = float(torch.sum(w_t * rad).item())
@@ -1477,47 +1493,272 @@ def compute_joint_info_all_types(
         "zp_mean": zp_mean
     }
 
-    # Compute joint type probabilities
-    # Vectorized computation of all joint probabilities
-    joint_types = ["prismatic", "planar", "revolute", "screw", "ball"]
-    joint_probs = {}
+    # Compute joint type probabilities with joint-specific parameters
+    prismatic_pt = compute_joint_probability_new(
+        col, cop, rad, zp, "prismatic",
+        prob_sigma=prob_sigma, prob_order=prob_order,
+        prismatic_sigma=prismatic_sigma, prismatic_order=prismatic_order,
+        planar_sigma=planar_sigma, planar_order=planar_order,
+        revolute_sigma=revolute_sigma, revolute_order=revolute_order,
+        screw_sigma=screw_sigma, screw_order=screw_order,
+        ball_sigma=ball_sigma, ball_order=ball_order
+    )
 
-    for joint_type in joint_types:
-        prob = compute_joint_probability_new(col, cop, rad, zp, joint_type,
-                                             prob_sigma=prob_sigma, prob_order=prob_order)
-        joint_probs[joint_type] = float(torch.sum(w_t * prob).item())
+    planar_pt = compute_joint_probability_new(
+        col, cop, rad, zp, "planar",
+        prob_sigma=prob_sigma, prob_order=prob_order,
+        prismatic_sigma=prismatic_sigma, prismatic_order=prismatic_order,
+        planar_sigma=planar_sigma, planar_order=planar_order,
+        revolute_sigma=revolute_sigma, revolute_order=revolute_order,
+        screw_sigma=screw_sigma, screw_order=screw_order,
+        ball_sigma=ball_sigma, ball_order=ball_order
+    )
+
+    revolute_pt = compute_joint_probability_new(
+        col, cop, rad, zp, "revolute",
+        prob_sigma=prob_sigma, prob_order=prob_order,
+        prismatic_sigma=prismatic_sigma, prismatic_order=prismatic_order,
+        planar_sigma=planar_sigma, planar_order=planar_order,
+        revolute_sigma=revolute_sigma, revolute_order=revolute_order,
+        screw_sigma=screw_sigma, screw_order=screw_order,
+        ball_sigma=ball_sigma, ball_order=ball_order
+    )
+
+    screw_pt = compute_joint_probability_new(
+        col, cop, rad, zp, "screw",
+        prob_sigma=prob_sigma, prob_order=prob_order,
+        prismatic_sigma=prismatic_sigma, prismatic_order=prismatic_order,
+        planar_sigma=planar_sigma, planar_order=planar_order,
+        revolute_sigma=revolute_sigma, revolute_order=revolute_order,
+        screw_sigma=screw_sigma, screw_order=screw_order,
+        ball_sigma=ball_sigma, ball_order=ball_order
+    )
+
+    ball_pt = compute_joint_probability_new(
+        col, cop, rad, zp, "ball",
+        prob_sigma=prob_sigma, prob_order=prob_order,
+        prismatic_sigma=prismatic_sigma, prismatic_order=prismatic_order,
+        planar_sigma=planar_sigma, planar_order=planar_order,
+        revolute_sigma=revolute_sigma, revolute_order=revolute_order,
+        screw_sigma=screw_sigma, screw_order=screw_order,
+        ball_sigma=ball_sigma, ball_order=ball_order
+    )
+
+    # Compute weighted probabilities
+    prismatic_prob = float(torch.sum(w_t * prismatic_pt).item())
+    planar_prob = float(torch.sum(w_t * planar_pt).item())
+    revolute_prob = float(torch.sum(w_t * revolute_pt).item())
+    screw_prob = float(torch.sum(w_t * screw_pt).item())
+    ball_prob = float(torch.sum(w_t * ball_pt).item())
 
     # Find best joint type
-    best_joint = max(joint_probs, key=joint_probs.get)
-    best_pval = joint_probs[best_joint]
+    joint_probs = [
+        ("prismatic", prismatic_prob),
+        ("planar", planar_prob),
+        ("revolute", revolute_prob),
+        ("screw", screw_prob),
+        ("ball", ball_prob),
+    ]
+    joint_probs.sort(key=lambda x: x[1], reverse=True)
+    best_joint, best_pval = joint_probs[0]
 
-    # Apply confidence threshold
-    if best_pval < confidence_threshold:
+    # Threshold for confidence
+    if best_pval < 0.3:
         best_joint = "Unknown"
 
-    # Compute parameters for all joint types
-    p_info = compute_planar_info(all_points_history, v_arr, w_arr, w_i_np, device=device)
-    b_info = compute_ball_info(all_points_history, v_arr, w_arr, w_i_np, device=device)
-    s_info = compute_screw_info(all_points_history, v_arr, w_arr, w_i_np, device=device)
-    pm_info = compute_prismatic_info(all_points_history, v_arr, w_arr, w_i_np, device=device)
-    r_info = compute_revolute_info(all_points_history, v_arr, w_arr, w_i_np, device=device)
-
-    # Collect all parameters in return dictionary
-    ret = {
-        "planar": p_info,
-        "ball": b_info,
-        "screw": s_info,
-        "prismatic": pm_info,
-        "revolute": r_info
+    ret_probs = {
+        "prismatic": prismatic_prob,
+        "planar": planar_prob,
+        "revolute": revolute_prob,
+        "screw": screw_prob,
+        "ball": ball_prob
     }
 
     # Collect additional information
     info_dict = {
         "basic_score_avg": basic_score_avg,
-        "joint_probs": joint_probs,
+        "joint_probs": ret_probs,
         "v_arr": v_arr,
         "w_arr": w_arr,
-        "w_i": w_i_np
+        "w_i": w_i
     }
 
     return ret, best_joint, info_dict
+
+# def compute_joint_info_all_types(
+#         all_points_history,
+#         neighbor_k=400,
+#         col_sigma=0.3, col_order=3.0,
+#         cop_sigma=0.3, cop_order=3.0,
+#         rad_sigma=0.3, rad_order=3.0,
+#         zp_sigma=0.3, zp_order=3.0,
+#         prob_sigma=0.3, prob_order=3.0,
+#         use_savgol=True,
+#         savgol_window=7,
+#         savgol_poly=3,
+#         use_multi_frame=True,
+#         multi_frame_window_radius=5,
+#         confidence_threshold=0.1
+# ):
+#     """
+#     Main entry for joint type estimation:
+#       1) Compute velocity & angular velocity
+#       2) Compute the four fundamental scores (col/cop/rad/zp)
+#       3) Compute joint type probability
+#       4) Estimate geometric parameters for each joint type
+#
+#     Args:
+#         all_points_history (ndarray): Point history of shape (T,N,3)
+#         neighbor_k (int): Number of neighbors for local estimation
+#         col_sigma (float): Width parameter for collinearity score
+#         col_order (float): Order parameter for collinearity score
+#         cop_sigma (float): Width parameter for coplanarity score
+#         cop_order (float): Order parameter for coplanarity score
+#         rad_sigma (float): Width parameter for radius consistency score
+#         rad_order (float): Order parameter for radius consistency score
+#         zp_sigma (float): Width parameter for zero pitch score
+#         zp_order (float): Order parameter for zero pitch score
+#         prob_sigma (float): Width parameter for probability function
+#         prob_order (float): Order parameter for probability function
+#         use_savgol (bool): Whether to apply Savitzky-Golay filtering
+#         savgol_window (int): Window size for Savitzky-Golay filter
+#         savgol_poly (int): Polynomial order for Savitzky-Golay filter
+#         use_multi_frame (bool): Whether to use multi-frame rigid fitting
+#         multi_frame_window_radius (int): Radius for multi-frame fitting
+#         confidence_threshold (float): Threshold for joint type confidence
+#
+#     Returns:
+#         tuple: (joint_params_dict, best_joint, info_dict)
+#     """
+#     device = "cuda" if torch.cuda.is_available() else "cpu"
+#     T = all_points_history.shape[0]
+#     N = all_points_history.shape[1]
+#
+#     # Handle insufficient frames case
+#     if T < 2:
+#         ret = {
+#             "planar": {"normal": np.array([0., 0., 0.]), "motion_limit": (0., 0.)},
+#             "ball": {"center": np.array([0., 0., 0.]), "motion_limit": (0., 0., 0.)},
+#             "screw": {"axis": np.array([0., 0., 0.]), "origin": np.array([0., 0., 0.]), "pitch": 0.,
+#                       "motion_limit": (0., 0.)},
+#             "prismatic": {"axis": np.array([0., 0., 0.]), "motion_limit": (0., 0.)},
+#             "revolute": {"axis": np.array([0., 0., 0.]), "origin": np.array([0., 0., 0.]), "motion_limit": (0., 0.)}
+#         }
+#         return ret, "Unknown", None
+#
+#     # Ensure contiguous memory layout for point cloud data
+#     all_points_history_contiguous = np.ascontiguousarray(all_points_history)
+#
+#     # Compute velocities
+#     dt = 0.1
+#     v_arr, w_arr = calculate_velocity_and_angular_velocity_for_all_frames(
+#         all_points_history_contiguous,
+#         dt=dt,
+#         num_neighbors=neighbor_k,
+#         use_savgol=use_savgol,
+#         savgol_window=savgol_window,
+#         savgol_poly=savgol_poly,
+#         use_multi_frame=use_multi_frame,
+#         window_radius=multi_frame_window_radius
+#     )
+#
+#     if v_arr is None or w_arr is None:
+#         ret = {
+#             "planar": {"normal": np.array([0., 0., 0.]), "motion_limit": (0., 0.)},
+#             "ball": {"center": np.array([0., 0., 0.]), "motion_limit": (0., 0., 0.)},
+#             "screw": {"axis": np.array([0., 0., 0.]), "origin": np.array([0., 0., 0.]), "pitch": 0.,
+#                       "motion_limit": (0., 0.)},
+#             "prismatic": {"axis": np.array([0., 0., 0.]), "motion_limit": (0., 0.)},
+#             "revolute": {"axis": np.array([0., 0., 0.]), "origin": np.array([0., 0., 0.]), "motion_limit": (0., 0.)}
+#         }
+#         return ret, "Unknown", None
+#
+#     # Vectorized calculation of motion significance for weights
+#     v_tensor = torch.tensor(v_arr, device=device)
+#     w_tensor = torch.tensor(w_arr, device=device)
+#
+#     # Calculate absolute values
+#     v_abs = torch.abs(v_tensor)
+#     w_abs = torch.abs(w_tensor)
+#
+#     # Calculate total motion magnitude
+#     motion_magnitude = torch.mean(v_abs, dim=0) + torch.mean(w_abs, dim=0)  # (N, 3)
+#     motion_magnitude = torch.mean(motion_magnitude, dim=1)  # (N)
+#
+#     # Normalize to weights
+#     sum_motion = torch.sum(motion_magnitude)
+#     if sum_motion < 1e-6:
+#         w_i = torch.ones_like(motion_magnitude) / motion_magnitude.shape[0]
+#     else:
+#         w_i = motion_magnitude / sum_motion
+#
+#     # Convert to numpy for compatibility with other functions
+#     w_i_np = w_i.cpu().numpy()
+#
+#     # Compute basic scores - using improved score calculation
+#     col, cop, rad, zp = compute_basic_scores(
+#         v_arr, w_arr, device=device,
+#         col_sigma=col_sigma, col_order=col_order,
+#         cop_sigma=cop_sigma, cop_order=cop_order,
+#         rad_sigma=rad_sigma, rad_order=rad_order,
+#         zp_sigma=zp_sigma, zp_order=zp_order
+#     )
+#
+#     # Calculate weighted averages
+#     w_t = w_i
+#     col_mean = float(torch.sum(w_t * col).item())
+#     cop_mean = float(torch.sum(w_t * cop).item())
+#     rad_mean = float(torch.sum(w_t * rad).item())
+#     zp_mean = float(torch.sum(w_t * zp).item())
+#
+#     basic_score_avg = {
+#         "col_mean": col_mean,
+#         "cop_mean": cop_mean,
+#         "rad_mean": rad_mean,
+#         "zp_mean": zp_mean
+#     }
+#
+#     # Compute joint type probabilities
+#     # Vectorized computation of all joint probabilities
+#     joint_types = ["prismatic", "planar", "revolute", "screw", "ball"]
+#     joint_probs = {}
+#
+#     for joint_type in joint_types:
+#         prob = compute_joint_probability_new(col, cop, rad, zp, joint_type,
+#                                              prob_sigma=prob_sigma, prob_order=prob_order)
+#         joint_probs[joint_type] = float(torch.sum(w_t * prob).item())
+#
+#     # Find best joint type
+#     best_joint = max(joint_probs, key=joint_probs.get)
+#     best_pval = joint_probs[best_joint]
+#
+#     # Apply confidence threshold
+#     if best_pval < confidence_threshold:
+#         best_joint = "Unknown"
+#
+#     # Compute parameters for all joint types
+#     p_info = compute_planar_info(all_points_history, v_arr, w_arr, w_i_np, device=device)
+#     b_info = compute_ball_info(all_points_history, v_arr, w_arr, w_i_np, device=device)
+#     s_info = compute_screw_info(all_points_history, v_arr, w_arr, w_i_np, device=device)
+#     pm_info = compute_prismatic_info(all_points_history, v_arr, w_arr, w_i_np, device=device)
+#     r_info = compute_revolute_info(all_points_history, v_arr, w_arr, w_i_np, device=device)
+#
+#     # Collect all parameters in return dictionary
+#     ret = {
+#         "planar": p_info,
+#         "ball": b_info,
+#         "screw": s_info,
+#         "prismatic": pm_info,
+#         "revolute": r_info
+#     }
+#
+#     # Collect additional information
+#     info_dict = {
+#         "basic_score_avg": basic_score_avg,
+#         "joint_probs": joint_probs,
+#         "v_arr": v_arr,
+#         "w_arr": w_arr,
+#         "w_i": w_i_np
+#     }
+#
+#     return ret, best_joint, info_dict

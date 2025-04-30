@@ -435,7 +435,13 @@ def compute_basic_scores(
     return col_score, cop_score, rad_score, zp_score
 
 
-def compute_joint_probability_new(col, cop, rad, zp, joint_type="prismatic", prob_sigma=0.1, prob_order=4.0):
+def compute_joint_probability_new(col, cop, rad, zp, joint_type="prismatic",
+                                  prob_sigma=0.1, prob_order=4.0,
+                                  prismatic_sigma=0.08, prismatic_order=5.0,
+                                  planar_sigma=0.12, planar_order=4.0,
+                                  revolute_sigma=0.08, revolute_order=5.0,
+                                  screw_sigma=0.15, screw_order=4.0,
+                                  ball_sigma=0.12, ball_order=4.0):
     """
     Compute joint probability (0~1) based on the four fundamental scores.
 
@@ -454,27 +460,27 @@ def compute_joint_probability_new(col, cop, rad, zp, joint_type="prismatic", pro
     if joint_type == "prismatic":
         # Prismatic: col->1, cop->0, rad->0, zp->1
         e = ((col - 1) ** 2 + (cop - 1) ** 2 + (rad - 0) ** 2 + (zp - 1) ** 2) / 4
-        return super_gaussian(e, prob_sigma, prob_order)
+        return super_gaussian(e, prismatic_sigma, prismatic_order)
 
     elif joint_type == "planar":
         # Planar: col->0, cop->1, rad->0, zp->1
         e = (col ** 2 + (cop - 1) ** 2 + rad ** 2 + (zp - 1) ** 2) / 4
-        return super_gaussian(e, prob_sigma, prob_order)
+        return super_gaussian(e, planar_sigma, planar_order)
 
     elif joint_type == "revolute":
         # Revolute: col->0, cop->1, rad->1, zp->1
         e = (col ** 2 + (cop - 1) ** 2 + (rad - 1) ** 2 + (zp - 1) ** 2) / 4
-        return super_gaussian(e, prob_sigma, prob_order)
+        return super_gaussian(e, revolute_sigma, revolute_order)
 
     elif joint_type == "screw":
         # Screw: col->0, cop->0, rad->1, zp->0
         e = (col ** 2 + cop ** 2 + (rad - 1) ** 2 + zp ** 2) / 4
-        return super_gaussian(e, prob_sigma, prob_order)
+        return super_gaussian(e, screw_sigma, screw_order)
 
     elif joint_type == "ball":
         # Ball: col->0, cop->0, rad->1, zp->1
         e = (col ** 2 + cop ** 2 + (rad - 1) ** 2 + (zp - 1) ** 2) / 4
-        return super_gaussian(e, prob_sigma, prob_order)
+        return super_gaussian(e, ball_sigma, ball_order)
 
     return torch.zeros_like(col)
 

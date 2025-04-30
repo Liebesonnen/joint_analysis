@@ -10,8 +10,6 @@ import polyscope as ps
 import polyscope.imgui as psim
 from typing import Dict, List, Optional, Callable, Any, Union
 
-from onnxruntime.tools.offline_tuning import TuningResults
-
 from .core.geometry import generate_ball_joint_points, generate_hollow_cylinder
 from .core.ekf import ExtendedKalmanFilter3D
 from .core.joint_estimation import compute_joint_info_all_types
@@ -86,7 +84,7 @@ class JointAnalysisApp:
         self.ekf_3d = ExtendedKalmanFilter3D(dt, Q, R, x0, P0)
 
         # Analysis parameters
-        self.use_ekf_3d = True
+        self.use_ekf_3d = False
         self.noise_sigma = 0.000
         self.col_sigma = 0.2
         self.col_order = 4.0
@@ -104,6 +102,16 @@ class JointAnalysisApp:
         self.savgol_polyorder = 2
         self.use_multi_frame_fit = False
         self.multi_frame_radius = 20
+        self.prismatic_sigma = 0.08
+        self.prismatic_order = 5.0
+        self.planar_sigma = 0.12
+        self.planar_order = 4.0
+        self.revolute_sigma = 0.08
+        self.revolute_order = 5.0
+        self.screw_sigma = 0.15
+        self.screw_order = 4.0
+        self.ball_sigma = 0.12
+        self.ball_order = 4.0
 
         # Ground truth data
         self._init_ground_truth()
@@ -874,6 +882,20 @@ class JointAnalysisApp:
             sequence = self.ps_viz.get_point_cloud_sequence()
             if sequence is not None and sequence.shape[0] >= 2:
                 # Run joint estimation
+                # param_dict, best_type, scores_info = compute_joint_info_all_types(
+                #     sequence,
+                #     neighbor_k=self.neighbor_k,
+                #     col_sigma=self.col_sigma, col_order=self.col_order,
+                #     cop_sigma=self.cop_sigma, cop_order=self.cop_order,
+                #     rad_sigma=self.rad_sigma, rad_order=self.rad_order,
+                #     zp_sigma=self.zp_sigma, zp_order=self.zp_order,
+                #     prob_sigma=self.prob_sigma, prob_order=self.prob_order,
+                #     use_savgol=self.use_savgol_filter,
+                #     savgol_window=self.savgol_window_length,
+                #     savgol_poly=self.savgol_polyorder,
+                #     use_multi_frame=self.use_multi_frame_fit,
+                #     multi_frame_window_radius=self.multi_frame_radius
+                # )
                 param_dict, best_type, scores_info = compute_joint_info_all_types(
                     sequence,
                     neighbor_k=self.neighbor_k,
@@ -882,6 +904,11 @@ class JointAnalysisApp:
                     rad_sigma=self.rad_sigma, rad_order=self.rad_order,
                     zp_sigma=self.zp_sigma, zp_order=self.zp_order,
                     prob_sigma=self.prob_sigma, prob_order=self.prob_order,
+                    prismatic_sigma=self.prismatic_sigma, prismatic_order=self.prismatic_order,
+                    planar_sigma=self.planar_sigma, planar_order=self.planar_order,
+                    revolute_sigma=self.revolute_sigma, revolute_order=self.revolute_order,
+                    screw_sigma=self.screw_sigma, screw_order=self.screw_order,
+                    ball_sigma=self.ball_sigma, ball_order=self.ball_order,
                     use_savgol=self.use_savgol_filter,
                     savgol_window=self.savgol_window_length,
                     savgol_poly=self.savgol_polyorder,
@@ -949,7 +976,59 @@ class JointAnalysisApp:
             psim.EndCombo()
 
         psim.Separator()
+        if psim.TreeNodeEx("Joint Type Probability Parameters", flags=psim.ImGuiTreeNodeFlags_DefaultOpen):
+            psim.Columns(2, "probcolumns", False)
+            psim.SetColumnWidth(0, 230)
 
+            # Prismatic joint parameters
+            changed_pris_sigma, new_pris_sigma = psim.InputFloat("prismatic_sigma", self.prismatic_sigma, 0.001)
+            if changed_pris_sigma:
+                self.prismatic_sigma = max(1e-6, new_pris_sigma)
+
+            changed_pris_order, new_pris_order = psim.InputFloat("prismatic_order", self.prismatic_order, 0.1)
+            if changed_pris_order:
+                self.prismatic_order = max(0.1, new_pris_order)
+
+            # Planar joint parameters
+            changed_plan_sigma, new_plan_sigma = psim.InputFloat("planar_sigma", self.planar_sigma, 0.001)
+            if changed_plan_sigma:
+                self.planar_sigma = max(1e-6, new_plan_sigma)
+
+            changed_plan_order, new_plan_order = psim.InputFloat("planar_order", self.planar_order, 0.1)
+            if changed_plan_order:
+                self.planar_order = max(0.1, new_plan_order)
+
+            psim.NextColumn()
+
+            # Revolute joint parameters
+            changed_rev_sigma, new_rev_sigma = psim.InputFloat("revolute_sigma", self.revolute_sigma, 0.001)
+            if changed_rev_sigma:
+                self.revolute_sigma = max(1e-6, new_rev_sigma)
+
+            changed_rev_order, new_rev_order = psim.InputFloat("revolute_order", self.revolute_order, 0.1)
+            if changed_rev_order:
+                self.revolute_order = max(0.1, new_rev_order)
+
+            # Screw joint parameters
+            changed_screw_sigma, new_screw_sigma = psim.InputFloat("screw_sigma", self.screw_sigma, 0.001)
+            if changed_screw_sigma:
+                self.screw_sigma = max(1e-6, new_screw_sigma)
+
+            changed_screw_order, new_screw_order = psim.InputFloat("screw_order", self.screw_order, 0.1)
+            if changed_screw_order:
+                self.screw_order = max(0.1, new_screw_order)
+
+            # Ball joint parameters
+            changed_ball_sigma, new_ball_sigma = psim.InputFloat("ball_sigma", self.ball_sigma, 0.001)
+            if changed_ball_sigma:
+                self.ball_sigma = max(1e-6, new_ball_sigma)
+
+            changed_ball_order, new_ball_order = psim.InputFloat("ball_order", self.ball_order, 0.1)
+            if changed_ball_order:
+                self.ball_order = max(0.1, new_ball_order)
+            psim.Columns(1)
+            psim.TreePop()
+        psim.Separator()
         # Parameters UI
         if psim.TreeNodeEx("Noise & Analysis Parameters", flags=psim.ImGuiTreeNodeFlags_DefaultOpen):
             psim.Columns(2, "mycolumns", False)
@@ -1126,7 +1205,7 @@ class JointAnalysisApp:
 
         # 初始化 GUI 但不启动事件循环
         print("Starting GUI...")
-        self.gui.start(width=800, height=600)
+        self.gui.start(width=1250, height=900)
 
         # 创建停止事件
         self.stop_event = threading.Event()

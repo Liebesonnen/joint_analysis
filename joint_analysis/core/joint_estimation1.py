@@ -339,9 +339,11 @@ def compute_planar_info(all_points_history, v_history, omega_history, w_i, devic
         ref = y_axis if torch.abs(torch.dot(normal_, x_axis)) < torch.abs(torch.dot(normal_, y_axis)) else x_axis
 
         # 计算正交向量
-        axis1_ = torch.cross(normal_, ref)
+        # axis1_ = torch.cross(normal_, ref)
+        axis1_ = torch.linalg.cross(normal_, ref)
         axis1_ = normalize_vector_torch(axis1_.unsqueeze(0))[0]
-        axis2_ = torch.cross(normal_, axis1_)
+        # axis2_ = torch.cross(normal_, axis1_)
+        axis2_ = torch.linalg.cross(normal_, axis1_)
         axis2_ = normalize_vector_torch(axis2_.unsqueeze(0))[0]
 
         # 投影到主轴上

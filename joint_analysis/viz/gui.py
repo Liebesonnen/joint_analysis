@@ -36,8 +36,8 @@ class JointAnalysisGUI:
         self.joint_prob_profile = {}
 
         # Window configuration
-        self.window_width = 1200
-        self.window_height = 800
+        self.window_width = 1250
+        self.window_height = 900
 
         # Analysis results callback
         self.result_callback = None
