@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from scipy.signal import savgol_filter
 from scipy.optimize import minimize
-
+import random
 from .scoring import (
     normalize_vector_torch, find_neighbors_batch, compute_basic_scores,
     compute_joint_probability_new, compute_motion_salience_batch, se3_log_map_batch,
@@ -952,274 +952,14 @@ def compute_prismatic_info(all_points_history, v_history, omega_history, w_i, de
     }
 
 
-# def compute_revolute_info(all_points_history, v_history, omega_history, w_i, device='cuda'):
-#     """
-#     Estimate parameters for a revolute joint.
-#
-#     Args:
-#         all_points_history (ndarray): Point history of shape (T,N,3)
-#         v_history (ndarray): Linear velocity history of shape (T-1,N,3)
-#         omega_history (ndarray): Angular velocity history of shape (T-1,N,3)
-#         w_i (ndarray): Point weights of shape (N,)
-#         device (str): Device to use for computation
-#
-#     Returns:
-#         dict: Dictionary containing revolute joint parameters
-#     """
-#     global revolute_axis_reference
-#
-#     all_points_history = torch.as_tensor(all_points_history, dtype=torch.float32, device=device)
-#     v_history = torch.as_tensor(v_history, dtype=torch.float32, device=device)
-#     omega_history = torch.as_tensor(omega_history, dtype=torch.float32, device=device)
-#     w_i = torch.as_tensor(w_i, dtype=torch.float32, device=device)
-#
-#     T, N = all_points_history.shape[0], all_points_history.shape[1]
-#     if T < 2:
-#         return {
-#             "axis": np.array([0., 0., 0.]),
-#             "origin": np.array([0., 0., 0.]),
-#             "motion_limit": (0., 0.)
-#         }
-#
-#     B = T - 1
-#     if B < 1:
-#         return {
-#             "axis": np.array([0., 0., 0.]),
-#             "origin": np.array([0., 0., 0.]),
-#             "motion_limit": (0., 0.)
-#         }
-#
-#     # Step 1: Calculate rotation axis direction
-#     # Use average direction of angular velocity vectors as rotation axis
-#     w_norm = torch.norm(omega_history, dim=2)  # (B, N)
-#     EPS_W = 1e-5
-#     mask_w = (w_norm > EPS_W)  # (B, N)
-#
-#     if mask_w.any():
-#         # Extract valid angular velocities and normalize
-#         omega_flat = omega_history.reshape(-1, 3)  # (B*N, 3)
-#         w_norm_flat = w_norm.reshape(-1)  # (B*N)
-#         mask_flat = mask_w.reshape(-1)  # (B*N)
-#
-#         valid_omegas = omega_flat[mask_flat]  # (K, 3)
-#         valid_w_norm = w_norm_flat[mask_flat]  # (K)
-#
-#         # Normalize vectors
-#         valid_dirs = valid_omegas / valid_w_norm.unsqueeze(-1)  # (K, 3)
-#
-#         # Get corresponding weights
-#         batch_indices, point_indices = torch.nonzero(mask_w, as_tuple=True)
-#         valid_weights = w_i[point_indices]  # (K)
-#
-#         # Ensure direction consistency
-#         ref_dir = valid_dirs[0]  # (3)
-#         dots = torch.sum(valid_dirs * ref_dir.unsqueeze(0), dim=1)  # (K)
-#         flip_mask = dots < 0
-#         valid_dirs[flip_mask] = -valid_dirs[flip_mask]
-#
-#         # Weighted average
-#         axis_raw = torch.sum(valid_dirs * valid_weights.unsqueeze(1), dim=0)  # (3)
-#         revolve_axis = normalize_vector_torch(axis_raw.unsqueeze(0))[0]  # (3)
-#     else:
-#         # If no valid angular velocities, use PCA to analyze trajectories
-#         # Reshape for batch processing
-#         omega_nbc = omega_history.permute(1, 0, 2).contiguous()  # (N, B, 3)
-#
-#         # Compute batch covariance matrices
-#         covs = torch.bmm(omega_nbc.transpose(1, 2), omega_nbc)  # (N, 3, 3)
-#         covs = covs + 1e-9 * torch.eye(3, device=device).unsqueeze(0)  # Add regularization
-#
-#         # Batch eigendecomposition
-#         eigvals, eigvecs = torch.linalg.eigh(covs)  # (N, 3), (N, 3, 3)
-#
-#         # Extract principal directions
-#         max_vecs = eigvecs[:, :, 2]  # (N, 3)
-#         max_vecs = normalize_vector_torch(max_vecs)  # (N, 3)
-#
-#         # Ensure consistent direction
-#         ref_vec = max_vecs[0]  # (3)
-#         dots = torch.sum(max_vecs * ref_vec.unsqueeze(0), dim=1)  # (N)
-#         flip_mask = dots < 0
-#         max_vecs[flip_mask] = -max_vecs[flip_mask]
-#
-#         # Weighted average
-#         revolve_axis = torch.sum(max_vecs * w_i.unsqueeze(-1), dim=0)  # (3)
-#         revolve_axis = normalize_vector_torch(revolve_axis.unsqueeze(0))[0]  # (3)
-#
-#     # Ensure direction consistency
-#     if revolute_axis_reference is None:
-#         revolute_axis_reference = revolve_axis.clone()
-#     else:
-#         dot_val = torch.dot(revolve_axis, revolute_axis_reference)
-#         if dot_val < 0:
-#             revolve_axis = -revolve_axis
-#
-#     # Step 2: Calculate a point on the rotation axis (axis origin)
-#     # For revolute joints, velocity satisfies: v = ω × r
-#     # where r is the vector from a point on the axis to the actual point
-#
-#     if mask_w.any():
-#         # Extract points, velocities, and angular velocities with valid angular velocity
-#         pts_flat = all_points_history[:-1].reshape(-1, 3)  # (B*N, 3)
-#         v_flat = v_history.reshape(-1, 3)  # (B*N, 3)
-#         omega_flat = omega_history.reshape(-1, 3)  # (B*N, 3)
-#         w_norm_flat = w_norm.reshape(-1)  # (B*N)
-#         mask_flat = mask_w.reshape(-1)  # (B*N)
-#
-#         valid_pts = pts_flat[mask_flat]  # (K, 3)
-#         valid_v = v_flat[mask_flat]  # (K, 3)
-#         valid_omega = omega_flat[mask_flat]  # (K, 3)
-#         valid_w_norm = w_norm_flat[mask_flat]  # (K)
-#
-#         # Calculate cross products v × ω
-#         cross_vw = torch.cross(valid_v, valid_omega, dim=1)  # (K, 3)
-#
-#         # Calculate perpendicular component: r_perp = (v × ω) / ω²
-#         w_sq = valid_w_norm ** 2  # (K)
-#         perp_comp = cross_vw / w_sq.unsqueeze(-1)  # (K, 3)
-#
-#         # Calculate points on axis: p - r_perp
-#         point_on_axis = valid_pts - perp_comp  # (K, 3)
-#
-#         # Ensure these points are on the axis by projecting
-#         # Calculate projections along the axis
-#         proj_vectors = torch.sum((point_on_axis - valid_pts) * revolve_axis, dim=1,
-#                                  keepdim=True) * revolve_axis  # (K, 3)
-#         point_on_axis = point_on_axis - proj_vectors  # Now strictly on the axis
-#
-#         # Project all points to a plane perpendicular to the axis
-#         # Select basis vectors for the plane
-#         if abs(revolve_axis[0]) < abs(revolve_axis[1]) and abs(revolve_axis[0]) < abs(revolve_axis[2]):
-#             perp1 = torch.tensor([0., revolve_axis[2], -revolve_axis[1]], device=device)
-#         else:
-#             perp1 = torch.tensor([revolve_axis[2], 0., -revolve_axis[0]], device=device)
-#
-#         perp1 = normalize_vector_torch(perp1.unsqueeze(0))[0]  # (3)
-#         perp2 = torch.cross(revolve_axis, perp1)  # (3)
-#
-#         # Project to plane
-#         proj1 = torch.sum(point_on_axis * perp1, dim=1)  # (K)
-#         proj2 = torch.sum(point_on_axis * perp2, dim=1)  # (K)
-#         proj_coords = torch.stack([proj1, proj2], dim=1)  # (K, 2)
-#
-#         # Get weights for these points
-#         batch_indices, point_indices = torch.nonzero(mask_w, as_tuple=True)
-#         point_weights = w_i[point_indices]  # (K)
-#
-#         # Calculate weighted center in plane
-#         weighted_coords = proj_coords * point_weights.unsqueeze(1)  # (K, 2)
-#         center_proj = torch.sum(weighted_coords, dim=0) / torch.sum(point_weights)  # (2)
-#
-#         # Convert back to 3D space
-#         origin_sum = center_proj[0] * perp1 + center_proj[1] * perp2  # (3)
-#     else:
-#         # If no valid data, use minimum distance method
-#         # Calculate radius and center
-#         r_mat = torch.zeros_like(v_history[:, :, 0])  # (B, N)
-#         r_mat[mask_w] = torch.norm(v_history[mask_w], dim=1) / w_norm[mask_w]
-#
-#         # Calculate perpendicular direction
-#         v_u = normalize_vector_torch(v_history)  # (B, N, 3)
-#         w_u = normalize_vector_torch(omega_history)  # (B, N, 3)
-#         dir_ = -torch.cross(v_u, w_u, dim=2)  # (B, N, 3)
-#         dir_ = normalize_vector_torch(dir_)  # (B, N, 3)
-#
-#         # Estimate center position
-#         r_3d = r_mat.unsqueeze(-1)  # (B, N, 1)
-#         c_pos = all_points_history[:-1] + dir_ * r_3d  # (B, N, 3)
-#
-#         # Reshape for point-wise processing
-#         c_pos_nbc = c_pos.permute(1, 0, 2).contiguous()  # (N, B, 3)
-#
-#         # Calculate median values for robustness
-#         c_pos_median = torch.median(c_pos_nbc, dim=1).values  # (N, 3)
-#
-#         # Calculate robust weights using Tukey's biweight
-#         dev = torch.norm(c_pos_nbc - c_pos_median.unsqueeze(1), dim=2)  # (N, B)
-#         scale = torch.median(dev, dim=1).values + 1e-6  # (N)
-#
-#         # Calculate robust weights with higher power for outlier suppression
-#         ratio = dev / scale.unsqueeze(-1)  # (N, B)
-#         w_r = 1.0 / (1.0 + torch.pow(ratio, 3.0))  # (N, B)
-#
-#         # Calculate weighted centers
-#         w_r_3d = w_r.unsqueeze(-1)  # (N, B, 1)
-#         c_pos_weighted = c_pos_nbc * w_r_3d  # (N, B, 3)
-#         sum_pos = torch.sum(c_pos_weighted, dim=1)  # (N, 3)
-#         sum_w = torch.sum(w_r, dim=1, keepdim=True) + 1e-6  # (N, 1)
-#
-#         # Point-wise weighted centers
-#         origin_each = sum_pos / sum_w  # (N, 3)
-#
-#         # Overall weighted center
-#         origin_sum = torch.sum(origin_each * w_i.unsqueeze(-1), dim=0)  # (3)
-#
-#         # Ensure origin is on the axis by projecting
-#         proj_on_axis = torch.dot(origin_sum, revolve_axis) * revolve_axis  # (3)
-#         perp_to_axis = origin_sum - proj_on_axis  # (3)
-#         origin_sum = origin_sum - perp_to_axis  # Now strictly on the axis
-#
-#     # Step 3: Calculate motion limits
-#     # Use trajectory of the first point to estimate motion range
-#     i0 = 0
-#     base_pt = all_points_history[0, i0]  # (3)
-#
-#     # Calculate vector from origin to base point
-#     base_vec = base_pt - origin_sum  # (3)
-#
-#     # Remove component along axis direction
-#     base_proj = torch.dot(base_vec, revolve_axis) * revolve_axis  # (3)
-#     base_perp = base_vec - base_proj  # (3)
-#     base_perp_norm = torch.norm(base_perp)  # scalar
-#
-#     if base_perp_norm > 1e-6:
-#         base_perp_dir = base_perp / base_perp_norm  # (3)
-#
-#         # Calculate angles for all frames
-#         # Get trajectory of point i0
-#         pts = all_points_history[:, i0, :]  # (T, 3)
-#
-#         # Calculate vectors from origin to points
-#         vecs = pts - origin_sum  # (T, 3)
-#
-#         # Remove axis components
-#         projs = torch.sum(vecs * revolve_axis, dim=1, keepdim=True) * revolve_axis  # (T, 3)
-#         perps = vecs - projs  # (T, 3)
-#         perp_norms = torch.norm(perps, dim=1)  # (T)
-#
-#         # Calculate angles for valid perpendicular components
-#         valid_mask = perp_norms > 1e-6
-#         if valid_mask.any():
-#             # Normalize perpendicular vectors
-#             valid_perps = perps[valid_mask]  # (K, 3)
-#             valid_norms = perp_norms[valid_mask]  # (K)
-#             valid_dirs = valid_perps / valid_norms.unsqueeze(1)  # (K, 3)
-#
-#             # Calculate dot products for angle calculation
-#             cos_angles = torch.sum(valid_dirs * base_perp_dir, dim=1)  # (K)
-#             cos_angles = torch.clamp(cos_angles, -1.0, 1.0)  # Ensure numerical stability
-#             angles = torch.acos(cos_angles)  # (K)
-#
-#             # Determine angle signs
-#             cross_prods = torch.cross(base_perp_dir.unsqueeze(0).expand_as(valid_dirs), valid_dirs, dim=1)  # (K, 3)
-#             signs = torch.sign(torch.sum(cross_prods * revolve_axis, dim=1))  # (K)
-#             angles = angles * signs  # (K)
-#
-#             # Calculate min and max angles
-#             min_a = float(torch.min(angles).item())
-#             max_a = float(torch.max(angles).item())
-#         else:
-#             min_a = 0.0
-#             max_a = 0.0
-#     else:
-#         min_a = 0.0
-#         max_a = 0.0
-#
-#     return {
-#         "axis": revolve_axis.cpu().numpy(),
-#         "origin": origin_sum.cpu().numpy(),
-#         "motion_limit": (min_a, max_a)
-#     }
+def normalize_vector_torch(v, eps=1e-6):
+    """向量归一化（批处理版本）"""
+    norm_v = torch.norm(v, dim=-1, keepdim=True)
+    mask = (norm_v > eps).squeeze(-1)
+    out = torch.zeros_like(v)
+    out[mask] = v[mask] / norm_v[mask]
+    return out
+
 def compute_revolute_info(all_points_history, v_history, omega_history, w_i, device='cuda'):
     """
     Estimate parameters for a revolute joint.
@@ -1300,6 +1040,7 @@ def compute_revolute_info(all_points_history, v_history, omega_history, w_i, dev
 
     r_3d = r_mat.unsqueeze(-1)
     c_pos = all_points_history[:-1] + dir_ * r_3d
+
     # Reshape for robustness
     c_pos_nbc = c_pos.permute(1, 0, 2).contiguous()
 
