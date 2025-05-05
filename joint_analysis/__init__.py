@@ -3,7 +3,6 @@ Joint Analysis package for estimating and analyzing joint types from point cloud
 """
 
 from .core import (
-    ExtendedKalmanFilter3D,
     compute_joint_info_all_types,
     compute_basic_scores,
     compute_joint_probability_new,
@@ -20,7 +19,7 @@ from .core import (
     generate_hollow_cylinder
 )
 
-from .viz import PolyscopeVisualizer, JointAnalysisGUI
+from .viz import PolyscopeVisualizer, JointAnalysisGUI, PlotSaver
 from .synthetic import SyntheticJointGenerator
 from .data import (
     load_numpy_sequence,
@@ -36,7 +35,6 @@ __version__ = "0.1.0"
 
 __all__ = [
     # Core functionality
-    'ExtendedKalmanFilter3D',
     'compute_joint_info_all_types',
     'compute_basic_scores',
     'compute_joint_probability_new',
@@ -57,6 +55,7 @@ __all__ = [
     # Visualization
     'PolyscopeVisualizer',
     'JointAnalysisGUI',
+    'PlotSaver',
 
     # Data generation and loading
     'SyntheticJointGenerator',

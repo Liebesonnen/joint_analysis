@@ -1,6 +1,5 @@
 """Core functionality for joint analysis."""
 
-from .ekf import ExtendedKalmanFilter3D
 from .geometry import (
     point_line_distance, translate_points, rotate_points,
     rotate_points_y, rotate_points_xyz, apply_screw_motion,
@@ -19,9 +18,6 @@ from .joint_estimation import (
 )
 
 __all__ = [
-    # EKF
-    'ExtendedKalmanFilter3D',
-
     # Geometry
     'point_line_distance', 'translate_points', 'rotate_points',
     'rotate_points_y', 'rotate_points_xyz', 'apply_screw_motion',

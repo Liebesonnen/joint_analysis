@@ -95,113 +95,79 @@ def multi_frame_rigid_fit(all_points_history: torch.Tensor, center_idx: int, win
 
 
 def calculate_velocity_and_angular_velocity_for_all_frames(
-        all_points_history,
-        dt=0.1,
-        num_neighbors=400,
-        use_savgol=True,
-        savgol_window=7,
-        savgol_poly=3,
-        use_multi_frame=True,
-        window_radius=5
+    all_points_history,
+    dt=0.1,
+    num_neighbors=400,
+    use_savgol=False,
+    savgol_window=5,
+    savgol_poly=2,
+    use_multi_frame=False,
+    window_radius=2
 ):
     """
-    Compute linear and angular velocity for all frames.
-
-    Args:
-        all_points_history (ndarray): Point history of shape (T,N,3)
-        dt (float): Time step
-        num_neighbors (int): Number of neighbors for local estimation
-        use_savgol (bool): Whether to apply Savitzky-Golay filtering
-        savgol_window (int): Window size for Savitzky-Golay filter
-        savgol_poly (int): Polynomial order for Savitzky-Golay filter
-        use_multi_frame (bool): Whether to use multi-frame rigid fitting
-        window_radius (int): Radius for multi-frame fitting
-
-    Returns:
-        tuple: (v_arr, w_arr) linear and angular velocities of shape (T-1,N,3)
+    Compute linear and angular velocity for (T,N,3).
+    Returns v_arr, w_arr => (T-1, N, 3).
     """
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    # Convert input to tensor if needed
     if not isinstance(all_points_history, torch.Tensor):
         all_points_history = torch.tensor(all_points_history, dtype=torch.float32, device=device)
-
     T, N, _ = all_points_history.shape
     if T < 2:
         return None, None
 
     if use_multi_frame:
-        # Multi-frame rigid fit approach - compute for all frames in parallel
-        center_indices = torch.arange(1, T, device=device)
-        B = len(center_indices)
-
-        v_batch = torch.zeros((B, N, 3), device=device)
-        w_batch = torch.zeros((B, N, 3), device=device)
-
-        # This part still needs a loop due to multi_frame_rigid_fit function
-        for i, center_idx in enumerate(center_indices):
+        # Multi-frame rigid fit
+        v_list = []
+        w_list = []
+        for t in range(T - 1):
+            center_idx = t + 1
             Tmat = multi_frame_rigid_fit(all_points_history, center_idx, window_radius)
             Tmat_batch = Tmat.unsqueeze(0)
-
-            # Convert to twist coordinates
             se3_logs = se3_log_map_batch(Tmat_batch)
             se3_v = se3_logs[0, :3] / dt
             se3_w = se3_logs[0, 3:] / dt
-
-            # Replicate for all points
-            v_batch[i] = se3_v.unsqueeze(0).expand(N, -1)
-            w_batch[i] = se3_w.unsqueeze(0).expand(N, -1)
-
-        v_arr = v_batch.cpu().numpy()
-        w_arr = w_batch.cpu().numpy()
+            v_list.append(se3_v.unsqueeze(0).repeat(all_points_history.shape[1], 1))
+            w_list.append(se3_w.unsqueeze(0).repeat(all_points_history.shape[1], 1))
+        v_arr = torch.stack(v_list, dim=0).cpu().numpy()
+        w_arr = torch.stack(w_list, dim=0).cpu().numpy()
     else:
-        # Neighbor-based estimation approach (already batch-oriented)
-        pts_prev = all_points_history[:-1]  # (T-1, N, 3)
-        pts_curr = all_points_history[1:]  # (T-1, N, 3)
+        # Neighbor-based estimation
+        pts_prev = all_points_history[:-1]
+        pts_curr = all_points_history[1:]
         B = T - 1
-
-        # Find neighbors
-        neighbor_idx_prev = find_neighbors_batch(pts_prev, num_neighbors)  # (B, N, K)
-        neighbor_idx_curr = find_neighbors_batch(pts_curr, num_neighbors)  # (B, N, K)
+        neighbor_idx_prev = find_neighbors_batch(pts_prev, num_neighbors)
+        neighbor_idx_curr = find_neighbors_batch(pts_curr, num_neighbors)
         K = num_neighbors
 
-        # Create batch indices for gathering
-        batch_indices = torch.arange(B, device=device).view(B, 1, 1).expand(-1, N, K)
+        src_batch = pts_prev[
+            torch.arange(B, device=device).view(B, 1, 1),
+            neighbor_idx_prev,
+            :
+        ]
+        tar_batch = pts_curr[
+            torch.arange(B, device=device).view(B, 1, 1),
+            neighbor_idx_curr,
+            :
+        ]
+        src_2d = src_batch.reshape(B * N, K, 3)
+        tar_2d = tar_batch.reshape(B * N, K, 3)
 
-        # Get neighbor points using advanced indexing
-        src_batch = pts_prev[batch_indices, neighbor_idx_prev]  # (B, N, K, 3)
-        tar_batch = pts_curr[batch_indices, neighbor_idx_curr]  # (B, N, K, 3)
+        R_2d = estimate_rotation_matrix_batch(src_2d, tar_2d)
+        c1_2d = src_2d.mean(dim=1)
+        c2_2d = tar_2d.mean(dim=1)
+        delta_p_2d = c2_2d - c1_2d
 
-        # Reshape for batch processing
-        src_2d = src_batch.reshape(B * N, K, 3)  # (B*N, K, 3)
-        tar_2d = tar_batch.reshape(B * N, K, 3)  # (B*N, K, 3)
-
-        # Estimate rotation matrices
-        R_2d = estimate_rotation_matrix_batch(src_2d, tar_2d)  # (B*N, 3, 3)
-
-        # Compute centroids
-        c1_2d = src_2d.mean(dim=1)  # (B*N, 3)
-        c2_2d = tar_2d.mean(dim=1)  # (B*N, 3)
-        delta_p_2d = c2_2d - c1_2d  # (B*N, 3)
-
-        # Create SE(3) transformation matrices
         eye_4 = torch.eye(4, device=device).unsqueeze(0).expand(B * N, -1, -1).clone()
         eye_4[:, :3, :3] = R_2d
         eye_4[:, :3, 3] = delta_p_2d
-        transform_matrices_2d = eye_4  # (B*N, 4, 4)
+        transform_matrices_2d = eye_4
+        se3_logs_2d = se3_log_map_batch(transform_matrices_2d)
+        v_2d = se3_logs_2d[:, :3] / dt
+        w_2d = se3_logs_2d[:, 3:] / dt
 
-        # Convert to twist coordinates
-        se3_logs_2d = se3_log_map_batch(transform_matrices_2d)  # (B*N, 6)
-
-        # Extract linear and angular velocities
-        v_2d = se3_logs_2d[:, :3] / dt  # (B*N, 3)
-        w_2d = se3_logs_2d[:, 3:] / dt  # (B*N, 3)
-
-        # Reshape back to (B, N, 3)
         v_arr = v_2d.reshape(B, N, 3).cpu().numpy()
         w_arr = w_2d.reshape(B, N, 3).cpu().numpy()
 
-    # Apply Savitzky-Golay filter if requested
     if use_savgol and (T - 1) >= savgol_window:
         v_arr = savgol_filter(
             v_arr, window_length=savgol_window, polyorder=savgol_poly,
@@ -1325,181 +1291,3 @@ def compute_joint_info_all_types(
     }
 
     return ret, best_joint, info_dict
-
-# def compute_joint_info_all_types(
-#         all_points_history,
-#         neighbor_k=400,
-#         col_sigma=0.3, col_order=3.0,
-#         cop_sigma=0.3, cop_order=3.0,
-#         rad_sigma=0.3, rad_order=3.0,
-#         zp_sigma=0.3, zp_order=3.0,
-#         prob_sigma=0.3, prob_order=3.0,
-#         use_savgol=True,
-#         savgol_window=7,
-#         savgol_poly=3,
-#         use_multi_frame=True,
-#         multi_frame_window_radius=5,
-#         confidence_threshold=0.1
-# ):
-#     """
-#     Main entry for joint type estimation:
-#       1) Compute velocity & angular velocity
-#       2) Compute the four fundamental scores (col/cop/rad/zp)
-#       3) Compute joint type probability
-#       4) Estimate geometric parameters for each joint type
-#
-#     Args:
-#         all_points_history (ndarray): Point history of shape (T,N,3)
-#         neighbor_k (int): Number of neighbors for local estimation
-#         col_sigma (float): Width parameter for collinearity score
-#         col_order (float): Order parameter for collinearity score
-#         cop_sigma (float): Width parameter for coplanarity score
-#         cop_order (float): Order parameter for coplanarity score
-#         rad_sigma (float): Width parameter for radius consistency score
-#         rad_order (float): Order parameter for radius consistency score
-#         zp_sigma (float): Width parameter for zero pitch score
-#         zp_order (float): Order parameter for zero pitch score
-#         prob_sigma (float): Width parameter for probability function
-#         prob_order (float): Order parameter for probability function
-#         use_savgol (bool): Whether to apply Savitzky-Golay filtering
-#         savgol_window (int): Window size for Savitzky-Golay filter
-#         savgol_poly (int): Polynomial order for Savitzky-Golay filter
-#         use_multi_frame (bool): Whether to use multi-frame rigid fitting
-#         multi_frame_window_radius (int): Radius for multi-frame fitting
-#         confidence_threshold (float): Threshold for joint type confidence
-#
-#     Returns:
-#         tuple: (joint_params_dict, best_joint, info_dict)
-#     """
-#     device = "cuda" if torch.cuda.is_available() else "cpu"
-#     T = all_points_history.shape[0]
-#     N = all_points_history.shape[1]
-#
-#     # Handle insufficient frames case
-#     if T < 2:
-#         ret = {
-#             "planar": {"normal": np.array([0., 0., 0.]), "motion_limit": (0., 0.)},
-#             "ball": {"center": np.array([0., 0., 0.]), "motion_limit": (0., 0., 0.)},
-#             "screw": {"axis": np.array([0., 0., 0.]), "origin": np.array([0., 0., 0.]), "pitch": 0.,
-#                       "motion_limit": (0., 0.)},
-#             "prismatic": {"axis": np.array([0., 0., 0.]), "motion_limit": (0., 0.)},
-#             "revolute": {"axis": np.array([0., 0., 0.]), "origin": np.array([0., 0., 0.]), "motion_limit": (0., 0.)}
-#         }
-#         return ret, "Unknown", None
-#
-#     # Ensure contiguous memory layout for point cloud data
-#     all_points_history_contiguous = np.ascontiguousarray(all_points_history)
-#
-#     # Compute velocities
-#     dt = 0.1
-#     v_arr, w_arr = calculate_velocity_and_angular_velocity_for_all_frames(
-#         all_points_history_contiguous,
-#         dt=dt,
-#         num_neighbors=neighbor_k,
-#         use_savgol=use_savgol,
-#         savgol_window=savgol_window,
-#         savgol_poly=savgol_poly,
-#         use_multi_frame=use_multi_frame,
-#         window_radius=multi_frame_window_radius
-#     )
-#
-#     if v_arr is None or w_arr is None:
-#         ret = {
-#             "planar": {"normal": np.array([0., 0., 0.]), "motion_limit": (0., 0.)},
-#             "ball": {"center": np.array([0., 0., 0.]), "motion_limit": (0., 0., 0.)},
-#             "screw": {"axis": np.array([0., 0., 0.]), "origin": np.array([0., 0., 0.]), "pitch": 0.,
-#                       "motion_limit": (0., 0.)},
-#             "prismatic": {"axis": np.array([0., 0., 0.]), "motion_limit": (0., 0.)},
-#             "revolute": {"axis": np.array([0., 0., 0.]), "origin": np.array([0., 0., 0.]), "motion_limit": (0., 0.)}
-#         }
-#         return ret, "Unknown", None
-#
-#     # Vectorized calculation of motion significance for weights
-#     v_tensor = torch.tensor(v_arr, device=device)
-#     w_tensor = torch.tensor(w_arr, device=device)
-#
-#     # Calculate absolute values
-#     v_abs = torch.abs(v_tensor)
-#     w_abs = torch.abs(w_tensor)
-#
-#     # Calculate total motion magnitude
-#     motion_magnitude = torch.mean(v_abs, dim=0) + torch.mean(w_abs, dim=0)  # (N, 3)
-#     motion_magnitude = torch.mean(motion_magnitude, dim=1)  # (N)
-#
-#     # Normalize to weights
-#     sum_motion = torch.sum(motion_magnitude)
-#     if sum_motion < 1e-6:
-#         w_i = torch.ones_like(motion_magnitude) / motion_magnitude.shape[0]
-#     else:
-#         w_i = motion_magnitude / sum_motion
-#
-#     # Convert to numpy for compatibility with other functions
-#     w_i_np = w_i.cpu().numpy()
-#
-#     # Compute basic scores - using improved score calculation
-#     col, cop, rad, zp = compute_basic_scores(
-#         v_arr, w_arr, device=device,
-#         col_sigma=col_sigma, col_order=col_order,
-#         cop_sigma=cop_sigma, cop_order=cop_order,
-#         rad_sigma=rad_sigma, rad_order=rad_order,
-#         zp_sigma=zp_sigma, zp_order=zp_order
-#     )
-#
-#     # Calculate weighted averages
-#     w_t = w_i
-#     col_mean = float(torch.sum(w_t * col).item())
-#     cop_mean = float(torch.sum(w_t * cop).item())
-#     rad_mean = float(torch.sum(w_t * rad).item())
-#     zp_mean = float(torch.sum(w_t * zp).item())
-#
-#     basic_score_avg = {
-#         "col_mean": col_mean,
-#         "cop_mean": cop_mean,
-#         "rad_mean": rad_mean,
-#         "zp_mean": zp_mean
-#     }
-#
-#     # Compute joint type probabilities
-#     # Vectorized computation of all joint probabilities
-#     joint_types = ["prismatic", "planar", "revolute", "screw", "ball"]
-#     joint_probs = {}
-#
-#     for joint_type in joint_types:
-#         prob = compute_joint_probability_new(col, cop, rad, zp, joint_type,
-#                                              prob_sigma=prob_sigma, prob_order=prob_order)
-#         joint_probs[joint_type] = float(torch.sum(w_t * prob).item())
-#
-#     # Find best joint type
-#     best_joint = max(joint_probs, key=joint_probs.get)
-#     best_pval = joint_probs[best_joint]
-#
-#     # Apply confidence threshold
-#     if best_pval < confidence_threshold:
-#         best_joint = "Unknown"
-#
-#     # Compute parameters for all joint types
-#     p_info = compute_planar_info(all_points_history, v_arr, w_arr, w_i_np, device=device)
-#     b_info = compute_ball_info(all_points_history, v_arr, w_arr, w_i_np, device=device)
-#     s_info = compute_screw_info(all_points_history, v_arr, w_arr, w_i_np, device=device)
-#     pm_info = compute_prismatic_info(all_points_history, v_arr, w_arr, w_i_np, device=device)
-#     r_info = compute_revolute_info(all_points_history, v_arr, w_arr, w_i_np, device=device)
-#
-#     # Collect all parameters in return dictionary
-#     ret = {
-#         "planar": p_info,
-#         "ball": b_info,
-#         "screw": s_info,
-#         "prismatic": pm_info,
-#         "revolute": r_info
-#     }
-#
-#     # Collect additional information
-#     info_dict = {
-#         "basic_score_avg": basic_score_avg,
-#         "joint_probs": joint_probs,
-#         "v_arr": v_arr,
-#         "w_arr": w_arr,
-#         "w_i": w_i_np
-#     }
-#
-#     return ret, best_joint, info_dict

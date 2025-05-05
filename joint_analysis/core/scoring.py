@@ -147,117 +147,97 @@ def find_neighbors_batch(pcd_batch: torch.Tensor, num_neighbor_pts: int):
     return neighbor_indices
 
 
-# def compute_velocity_angular_one_step_3d(pts_prev, pts_curr, dt, num_neighbors=50):
+def compute_velocity_angular_one_step_3d(pts_prev, pts_curr, dt, num_neighbors=50):
+    """
+    Compute linear and angular velocities between two consecutive frames.
+
+    Args:
+        pts_prev (Tensor): Points in previous frame of shape (N,3)
+        pts_curr (Tensor): Points in current frame of shape (N,3)
+        dt (float): Time step
+        num_neighbors (int): Number of neighbors to use for local transformation estimation
+
+    Returns:
+        tuple: (linear_velocity, angular_velocity) each of shape (3,)
+    """
+    device = pts_prev.device
+
+    # Find nearest neighbors
+    neighbor_idx_prev = find_neighbors_batch(pts_prev.unsqueeze(0), num_neighbors)[0]  # (N,k)
+    neighbor_idx_curr = find_neighbors_batch(pts_curr.unsqueeze(0), num_neighbors)[0]  # (N,k)
+
+    # Get neighbor points
+    src_batch = pts_prev[neighbor_idx_prev]  # (N,k,3)
+    tar_batch = pts_curr[neighbor_idx_curr]  # (N,k,3)
+
+    # Estimate rotation matrices
+    R_2d = estimate_rotation_matrix_batch(src_batch, tar_batch)
+    c1_2d = src_batch.mean(dim=1)
+    c2_2d = tar_batch.mean(dim=1)
+    delta_p_2d = c2_2d - c1_2d
+
+    # Create SE(3) transformation matrices
+    eye_4 = torch.eye(4, device=device).unsqueeze(0).expand(pts_prev.shape[0], -1, -1).clone()
+    eye_4[:, :3, :3] = R_2d
+    eye_4[:, :3, 3] = delta_p_2d
+
+    # Convert to twist coordinates
+    se3_logs = se3_log_map_batch(eye_4)  # (N,6)
+
+    # Extract linear and angular velocities
+    trans_local = se3_logs[:, :3] / dt  # (N,3)
+    rot_local = se3_logs[:, 3:] / dt  # (N,3)
+
+    # Average over all points
+    v_mean = trans_local.mean(dim=0)  # (3,)
+    w_mean = rot_local.mean(dim=0)  # (3,)
+
+    return v_mean.cpu().numpy(), w_mean.cpu().numpy()
+
+# def compute_velocity_angular_one_step_3d(pts_prev, pts_curr, dt=0.1, num_neighbors=50):
 #     """
 #     Compute linear and angular velocities between two consecutive frames.
-#
-#     Args:
-#         pts_prev (Tensor): Points in previous frame of shape (N,3)
-#         pts_curr (Tensor): Points in current frame of shape (N,3)
-#         dt (float): Time step
-#         num_neighbors (int): Number of neighbors to use for local transformation estimation
-#
-#     Returns:
-#         tuple: (linear_velocity, angular_velocity) each of shape (3,)
+#     Works with both PyTorch tensors and NumPy arrays.
 #     """
-#     device = pts_prev.device
+#     # Check if inputs are PyTorch tensors, if not convert them
+#     if not isinstance(pts_prev, torch.Tensor):
+#         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#         pts_prev = torch.tensor(pts_prev, dtype=torch.float32, device=device)
+#         pts_curr = torch.tensor(pts_curr, dtype=torch.float32, device=device)
+#         tensor_converted = True
+#     else:
+#         tensor_converted = False
+#         device = pts_prev.device
 #
-#     # Find nearest neighbors
+#     # Original PyTorch calculation
+#     N = pts_prev.shape[0]
 #     neighbor_idx_prev = find_neighbors_batch(pts_prev.unsqueeze(0), num_neighbors)[0]  # (N,k)
 #     neighbor_idx_curr = find_neighbors_batch(pts_curr.unsqueeze(0), num_neighbors)[0]  # (N,k)
 #
-#     # Get neighbor points
 #     src_batch = pts_prev[neighbor_idx_prev]  # (N,k,3)
 #     tar_batch = pts_curr[neighbor_idx_curr]  # (N,k,3)
 #
-#     # Estimate rotation matrices
+#     # SVD
 #     R_2d = estimate_rotation_matrix_batch(src_batch, tar_batch)
 #     c1_2d = src_batch.mean(dim=1)
 #     c2_2d = tar_batch.mean(dim=1)
 #     delta_p_2d = c2_2d - c1_2d
 #
-#     # Create SE(3) transformation matrices
-#     eye_4 = torch.eye(4, device=device).unsqueeze(0).expand(pts_prev.shape[0], -1, -1).clone()
+#     eye_4 = torch.eye(4, device=device).unsqueeze(0).expand(N, -1, -1).clone()
 #     eye_4[:, :3, :3] = R_2d
 #     eye_4[:, :3, 3] = delta_p_2d
-#
-#     # Convert to twist coordinates
 #     se3_logs = se3_log_map_batch(eye_4)  # (N,6)
 #
-#     # Extract linear and angular velocities
+#     # 前3维是平移向量, 后3维是旋转向量
 #     trans_local = se3_logs[:, :3] / dt  # (N,3)
 #     rot_local = se3_logs[:, 3:] / dt  # (N,3)
 #
-#     # Average over all points
+#     # 对N个点取平均
 #     v_mean = trans_local.mean(dim=0)  # (3,)
 #     w_mean = rot_local.mean(dim=0)  # (3,)
 #
 #     return v_mean.cpu().numpy(), w_mean.cpu().numpy()
-def compute_velocity_angular_one_step_3d(pts_prev, pts_curr, dt=0.1, num_neighbors=50):
-    """计算两帧之间的线速度和角速度
 
-    Args:
-        pts_prev: 前一帧点云 (N, 3)
-        pts_curr: 当前帧点云 (N, 3)
-        dt: 时间步长
-        num_neighbors: 用于计算角速度的邻居点数
-
-    Returns:
-        v_3d: 线速度 (3,)
-        w_3d: 角速度 (3,)
-    """
-    # 检查是否是PyTorch张量
-    if hasattr(pts_prev, 'device'):
-        # PyTorch张量的处理逻辑
-        device = pts_prev.device
-        # ...其他PyTorch相关代码
-    else:
-        # NumPy数组的处理逻辑
-        # 计算质心
-        centroid_prev = np.mean(pts_prev, axis=0)
-        centroid_curr = np.mean(pts_curr, axis=0)
-
-        # 线速度
-        v_3d = (centroid_curr - centroid_prev) / dt
-
-        # 角速度计算
-        # (这里可以实现纯NumPy版本的角速度计算)
-        # 示例实现:
-        w_3d = np.zeros(3)
-        if pts_prev.shape[0] > 3:
-            # 寻找偏离最大的点
-            displacements = pts_curr - pts_prev
-            disp_norms = np.linalg.norm(displacements, axis=1)
-            max_indices = np.argsort(disp_norms)[-3:]
-
-            omegas = []
-            for idx in max_indices:
-                # 找邻居
-                dists = np.linalg.norm(pts_prev - pts_prev[idx], axis=1)
-                neighbor_indices = np.argsort(dists)[:num_neighbors]
-
-                # 局部运动分析
-                local_prev = pts_prev[neighbor_indices]
-                local_curr = pts_curr[neighbor_indices]
-
-                # 计算旋转
-                H = (local_prev - np.mean(local_prev, axis=0)).T @ (local_curr - np.mean(local_curr, axis=0))
-                U, _, Vt = np.linalg.svd(H)
-                R = Vt.T @ U.T
-
-                # 旋转矩阵转角速度
-                omega = np.array([
-                    R[2, 1] - R[1, 2],
-                    R[0, 2] - R[2, 0],
-                    R[1, 0] - R[0, 1]
-                ]) / (2 * dt)
-
-                omegas.append(omega)
-
-            if omegas:
-                w_3d = np.mean(omegas, axis=0)
-
-    return v_3d, w_3d
 
 def compute_position_average_3d(pts):
     """

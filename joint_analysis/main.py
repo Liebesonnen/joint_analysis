@@ -11,7 +11,6 @@ import polyscope.imgui as psim
 from typing import Dict, List, Optional, Callable, Any, Union
 
 from .core.geometry import generate_ball_joint_points, generate_hollow_cylinder
-from .core.ekf import ExtendedKalmanFilter3D
 from .core.joint_estimation import compute_joint_info_all_types
 from .viz.polyscope_viz import PolyscopeVisualizer
 from .viz.gui import JointAnalysisGUI
@@ -20,6 +19,9 @@ from .data.data_loader import load_numpy_sequence, load_pytorch_data, load_real_
 from typing import Dict, List, Optional, Callable, Any, Union, Tuple
 from .core.geometry import rotate_points_y, rotate_points, translate_points, apply_screw_motion, rotate_points_xyz
 from .core.scoring import compute_velocity_angular_one_step_3d, compute_position_average_3d
+import os
+from .viz.plot_saver import PlotSaver
+import torch
 class JointAnalysisApp:
     """
     Main application for joint analysis.
@@ -32,14 +34,20 @@ class JointAnalysisApp:
         Args:
             output_dir (str): Directory to save output files
         """
-        self.use_gui = True  # 添加此标志
+        self.use_gui = True
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
 
+        # Create plots directory
+        self.plots_dir = os.path.join(output_dir, "plots")
+        os.makedirs(self.plots_dir, exist_ok=True)
+
         # Initialize visualizers
         self.ps_viz = PolyscopeVisualizer()
-        self.gui = JointAnalysisGUI()
+        self.gui = JointAnalysisGUI(output_dir=self.plots_dir)  # Pass plots directory to GUI
 
+        # Create a PlotSaver instance
+        self.plot_saver = PlotSaver(output_dir=self.plots_dir)
         # Define available modes
         self.modes = [
             "Prismatic Door", "Prismatic Door 2", "Prismatic Door 3",
@@ -75,16 +83,7 @@ class JointAnalysisApp:
             if data is not None and len(data) > 0:
                 self.total_frames_per_mode[name] = data.shape[0]
 
-        # Initialize EKF
-        dt = 0.1
-        Q = np.diag([0.01, 0.01, 0.01, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]) ** 2
-        R = np.diag([0.02, 0.02, 0.02, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2]) ** 2
-        x0 = np.zeros(9)
-        P0 = np.eye(9) * 1.0
-        self.ekf_3d = ExtendedKalmanFilter3D(dt, Q, R, x0, P0)
-
         # Analysis parameters
-        self.use_ekf_3d = False
         self.noise_sigma = 0.000
         self.col_sigma = 0.2
         self.col_order = 4.0
@@ -112,7 +111,7 @@ class JointAnalysisApp:
         self.screw_order = 4.0
         self.ball_sigma = 0.12
         self.ball_order = 4.0
-
+        self.auto_save_plots = False
         # Ground truth data
         self._init_ground_truth()
 
@@ -258,6 +257,52 @@ class JointAnalysisApp:
             }
         }
 
+    def save_plots(self):
+        """Save plots for the current mode."""
+        if self.current_mode and self.gui:
+            # Extract data for the current mode
+            mode = self.current_mode
+
+            # Check if there's data to save
+            if (mode in self.gui.velocity_profile and
+                    len(self.gui.velocity_profile[mode]) > 0):
+
+                # Save velocity plots
+                self.plot_saver.save_velocity_plots(
+                    mode,
+                    self.gui.velocity_profile[mode],
+                    self.gui.angular_velocity_profile[mode],
+                    self
+                )
+
+                # Save basic scores plots
+                self.plot_saver.save_basic_scores_plots(
+                    mode,
+                    self.gui.col_score_profile[mode],
+                    self.gui.cop_score_profile[mode],
+                    self.gui.rad_score_profile[mode],
+                    self.gui.zp_score_profile[mode],
+                    self
+                )
+
+                # Save joint probability plots
+                self.plot_saver.save_joint_probability_plots(
+                    mode,
+                    self.gui.joint_prob_profile[mode],
+                    self
+                )
+
+                # Save error plots
+                self.plot_saver.save_error_plots(
+                    mode,
+                    self.gui.position_error_profile[mode],
+                    self.gui.angular_error_profile[mode],
+                    self
+                )
+
+                print(f"Plots saved to: {os.path.join(self.plots_dir, mode.replace(' ', '_'))}")
+            else:
+                print(f"No data available to save plots for mode: {mode}")
     def _handle_gui_result(self, result: str) -> None:
         """
         Handle results from the GUI.
@@ -383,7 +428,7 @@ class JointAnalysisApp:
             angle_err = abs(1.0 - abs(dotv))
 
             # Position error - for prismatic joint, use origin distance
-            pos_err = np.linalg.norm(info["origin"] - gt_params["origin"]) / 5.0
+            pos_err = 0
 
             return pos_err, angle_err
 
@@ -435,7 +480,7 @@ class JointAnalysisApp:
 
             # Position error - plane distance to origin
             # This is simplified and might not be the best metric
-            pos_err = abs(np.dot(est_normal_norm, np.array([0., 0., 0.])))
+            pos_err = 0
 
             return pos_err, angle_err
 
@@ -842,60 +887,28 @@ class JointAnalysisApp:
 
         # Increment frame counter
         self.frame_count_per_mode[mode] += 1
+        if fidx >= 0 and current_points is not None and prev_points is not None:
+            # Convert NumPy arrays to PyTorch tensors
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            prev_points_tensor = torch.tensor(prev_points, dtype=torch.float32, device=device)
+            current_points_tensor = torch.tensor(current_points, dtype=torch.float32, device=device)
 
-        # Apply EKF if we have at least 2 frames
-        if fidx > 0 and current_points is not None and prev_points is not None:
-            # Compute linear and angular velocities
+            # Call the original function with PyTorch tensors
             v_meas_3d, w_meas_3d = compute_velocity_angular_one_step_3d(
-                prev_points, current_points, dt=0.1, num_neighbors=self.neighbor_k
+                prev_points_tensor, current_points_tensor, dt=0.1, num_neighbors=self.neighbor_k
             )
 
-            # Compute average position
-            p_meas_3d = compute_position_average_3d(current_points)  # (3,)
+            # The rest of your code remains the same
+            vel_mag = np.linalg.norm(v_meas_3d)
+            ang_mag = np.linalg.norm(w_meas_3d)
 
-            # Assemble measurement vector
-            z = np.concatenate([p_meas_3d, v_meas_3d, w_meas_3d], axis=0)
-
-            if self.use_ekf_3d:
-                # EKF predict + update
-                self.ekf_3d.predict()
-                self.ekf_3d.update(z)
-                vx_est = self.ekf_3d.x[3]
-                vy_est = self.ekf_3d.x[4]
-                vz_est = self.ekf_3d.x[5]
-                wx_est = self.ekf_3d.x[6]
-                wy_est = self.ekf_3d.x[7]
-                wz_est = self.ekf_3d.x[8]
-                vel_mag = np.sqrt(vx_est * vx_est + vy_est * vy_est + vz_est * vz_est)
-                ang_mag = np.sqrt(wx_est * wx_est + wy_est * wy_est + wz_est * wz_est)
-            else:
-                # Direct measurement
-                vel_mag = np.linalg.norm(v_meas_3d)
-                ang_mag = np.linalg.norm(w_meas_3d)
-
-            # Update GUI with velocity data
+            # Update GUI data - still showing linearly increasing values
             if self.use_gui and self.gui:
                 self.gui.add_velocity_data(mode, vel_mag, ang_mag)
-            self.gui.add_velocity_data(mode, vel_mag, ang_mag)
-
-            # Run joint type estimation if we have a sequence
+            # 运行关节类型估计（如果我们有序列）
             sequence = self.ps_viz.get_point_cloud_sequence()
             if sequence is not None and sequence.shape[0] >= 2:
-                # Run joint estimation
-                # param_dict, best_type, scores_info = compute_joint_info_all_types(
-                #     sequence,
-                #     neighbor_k=self.neighbor_k,
-                #     col_sigma=self.col_sigma, col_order=self.col_order,
-                #     cop_sigma=self.cop_sigma, cop_order=self.cop_order,
-                #     rad_sigma=self.rad_sigma, rad_order=self.rad_order,
-                #     zp_sigma=self.zp_sigma, zp_order=self.zp_order,
-                #     prob_sigma=self.prob_sigma, prob_order=self.prob_order,
-                #     use_savgol=self.use_savgol_filter,
-                #     savgol_window=self.savgol_window_length,
-                #     savgol_poly=self.savgol_polyorder,
-                #     use_multi_frame=self.use_multi_frame_fit,
-                #     multi_frame_window_radius=self.multi_frame_radius
-                # )
+                # 运行关节估计
                 param_dict, best_type, scores_info = compute_joint_info_all_types(
                     sequence,
                     neighbor_k=self.neighbor_k,
@@ -1107,11 +1120,6 @@ class JointAnalysisApp:
             changed_mfr, new_mfr = psim.InputInt("MultiFrame Radius", self.multi_frame_radius, 1)
             if changed_mfr:
                 self.multi_frame_radius = max(1, new_mfr)
-
-            _, use_ekf_new = psim.Checkbox("Use EKF?", self.use_ekf_3d)
-            if use_ekf_new != self.use_ekf_3d:
-                self.use_ekf_3d = use_ekf_new
-
             psim.Columns(1)
             psim.TreePop()
 
@@ -1134,6 +1142,10 @@ class JointAnalysisApp:
             if filepath:
                 psim.TextUnformatted(f"Saved to: {filepath}")
 
+        psim.SameLine()
+
+        if psim.Button("Save Plots"):
+            self.save_plots()
         # Update motion when running
         if self.running:
             limit = self.total_frames_per_mode[self.current_mode]
@@ -1242,14 +1254,32 @@ class JointAnalysisApp:
             print("Cleaning up...")
             self.gui.shutdown()
 
-def run_application(use_gui=True):
-    """Run the joint analysis application."""
-    print(f"Starting joint analysis application with GUI: {use_gui}")
-    app = JointAnalysisApp()
 
-    # 因为我们修改了run()方法来同时支持两个库，
-    # 这里就统一使用run()
+def run_application(use_gui=True, output_dir="exported_pointclouds", auto_save_plots=False):
+    """
+    Run the joint analysis application.
+
+    Args:
+        use_gui (bool): Whether to use the GUI
+        output_dir (str): Directory to save output files
+        auto_save_plots (bool): Whether to automatically save plots at the end
+    """
+    print(f"Starting joint analysis application with GUI: {use_gui}")
+    app = JointAnalysisApp(output_dir=output_dir)
     app.use_gui = use_gui
+
+    # Store auto_save_plots setting
+    app.auto_save_plots = auto_save_plots
+
+    # Run the application
     app.run()
+
+    # If auto_save_plots is enabled, save plots before exiting
+    if auto_save_plots and app.gui:
+        print("Auto-saving plots for all modes with data...")
+        app.plot_saver.save_all_plots(app.gui)
+        print(f"Plots saved to: {app.plots_dir}")
+
+
 if __name__ == "__main__":
     run_application(use_gui=True)
