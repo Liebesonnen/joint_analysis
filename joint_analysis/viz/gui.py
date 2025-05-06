@@ -45,7 +45,7 @@ class PlotSaver:
         plt.plot(x_data, velocity_data, 'b-', linewidth=2)
         plt.title(f'Linear Velocity over Time - {mode}')
         plt.xlabel('Time Frames')
-        plt.ylabel('Linear Velocity Magnitude')
+        plt.ylabel('Linear Velocity Magnitude(m/s)')
         plt.grid(True)
         plt.savefig(os.path.join(mode_dir, 'linear_velocity.png'), dpi=50)
         plt.close()
@@ -56,7 +56,7 @@ class PlotSaver:
         plt.plot(x_data, angular_velocity_data, 'r-', linewidth=2)
         plt.title(f'Angular Velocity over Time - {mode}')
         plt.xlabel('Time Frames')
-        plt.ylabel('Angular Velocity Magnitude')
+        plt.ylabel('Angular Velocity Magnitude(rad/s)')
         plt.grid(True)
         plt.savefig(os.path.join(mode_dir, 'angular_velocity.png'), dpi=50)
         plt.close()
@@ -180,14 +180,14 @@ class PlotSaver:
         plt.plot(x_data, position_error_data, 'b-', linewidth=2)
         plt.title('Position Error')
         plt.xlabel('Time Frames')
-        plt.ylabel('Error')
+        plt.ylabel('Error(m)')
         plt.grid(True)
 
         plt.subplot(1, 2, 2)
         plt.plot(x_data, angular_error_data, 'r-', linewidth=2)
         plt.title('Angular Error')
         plt.xlabel('Time Frames')
-        plt.ylabel('Error')
+        plt.ylabel('Error(rad)')
         plt.grid(True)
 
         plt.tight_layout()
@@ -465,7 +465,7 @@ class JointAnalysisGUI:
                         with dpg.plot(label="Weighted linear velocity in different time frames", height=300, width=450):
                             dpg.add_plot_legend()
                             dpg.add_plot_axis(dpg.mvXAxis, label="Time frames", tag="x_axis_vel")
-                            y_axis_vel = dpg.add_plot_axis(dpg.mvYAxis, label="Weighted velocity", tag="y_axis_vel")
+                            y_axis_vel = dpg.add_plot_axis(dpg.mvYAxis, label="Weighted velocity(m/s)", tag="y_axis_vel")
 
                             for mode in self.modes:
                                 tag_line = f"{mode}_vel_series"
@@ -477,7 +477,7 @@ class JointAnalysisGUI:
                                       width=450):
                             dpg.add_plot_legend()
                             dpg.add_plot_axis(dpg.mvXAxis, label="Time frames", tag="x_axis_omega")
-                            y_axis_omega = dpg.add_plot_axis(dpg.mvYAxis, label="Weighted omega", tag="y_axis_omega")
+                            y_axis_omega = dpg.add_plot_axis(dpg.mvYAxis, label="Weighted omega(rad/s)", tag="y_axis_omega")
 
                             for mode in self.modes:
                                 tag_line = f"{mode}_omega_series"
@@ -522,7 +522,7 @@ class JointAnalysisGUI:
                         with dpg.plot(label="Position Error in different time frames", height=300, width=450):
                             dpg.add_plot_legend()
                             dpg.add_plot_axis(dpg.mvXAxis, label="Time frames", tag="x_axis_pos_err")
-                            y_axis_pos_err = dpg.add_plot_axis(dpg.mvYAxis, label="Position Error",
+                            y_axis_pos_err = dpg.add_plot_axis(dpg.mvYAxis, label="Position Error(m)",
                                                                tag="y_axis_pos_err")
 
                             for mode in self.modes:
@@ -534,7 +534,7 @@ class JointAnalysisGUI:
                         with dpg.plot(label="Angular Error in different time frames", height=300, width=450):
                             dpg.add_plot_legend()
                             dpg.add_plot_axis(dpg.mvXAxis, label="Time frames", tag="x_axis_ang_err")
-                            y_axis_ang_err = dpg.add_plot_axis(dpg.mvYAxis, label="Angular Error", tag="y_axis_ang_err")
+                            y_axis_ang_err = dpg.add_plot_axis(dpg.mvYAxis, label="Angular Error(m)", tag="y_axis_ang_err")
 
                             for mode in self.modes:
                                 tag_line = f"{mode}_ang_err_series"

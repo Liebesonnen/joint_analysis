@@ -1,12 +1,10 @@
 """
 Joint type estimation algorithms and parameter calculation with PyTorch acceleration.
 """
-
+import math
 import numpy as np
 import torch
 from scipy.signal import savgol_filter
-from scipy.optimize import minimize
-import random
 from .scoring import (
     normalize_vector_torch, find_neighbors_batch, compute_basic_scores,
     compute_joint_probability_new, compute_motion_salience_batch, se3_log_map_batch,
@@ -27,86 +25,79 @@ def multi_frame_rigid_fit(all_points_history: torch.Tensor, center_idx: int, win
     """
     Multi-frame rigid fit around [center_idx-window_radius, center_idx+window_radius].
     Returns a 4x4 transform from the center frame to best fit.
-
-    Args:
-        all_points_history (Tensor): Point history of shape (T,N,3)
-        center_idx (int): Index of the center frame
-        window_radius (int): Radius of the window around center frame
-
-    Returns:
-        Tensor: Transformation matrix of shape (4,4)
     """
     T, N, _ = all_points_history.shape
     device = all_points_history.device
-
-    # Define window boundaries
     i_min = max(0, center_idx - window_radius)
     i_max = min(T - 1, center_idx + window_radius)
 
-    # Reference points from center frame
     ref_pts = all_points_history[center_idx]
-
-    # Create frame indices for window (excluding center_idx)
-    frame_indices = torch.cat([
-        torch.arange(i_min, center_idx, device=device),
-        torch.arange(center_idx + 1, i_max + 1, device=device)
-    ])
-
-    # Handle empty window case
-    if len(frame_indices) == 0:
+    src_list = []
+    tgt_list = []
+    for idx in range(i_min, i_max + 1):
+        if idx == center_idx:
+            continue
+        cur_pts = all_points_history[idx]
+        src_list.append(ref_pts)
+        tgt_list.append(cur_pts)
+    if not src_list:
         return torch.eye(4, device=device)
+    src_big = torch.cat(src_list, dim=0)
+    tgt_big = torch.cat(tgt_list, dim=0)
 
-    # Collect source and target points using indexing
-    # Expand ref_pts to match frame_indices size [num_frames, N, 3]
-    src_big = ref_pts.unsqueeze(0).expand(len(frame_indices), -1, -1).reshape(-1, 3)
-
-    # Gather target points using frame_indices [num_frames, N, 3]
-    tgt_big = all_points_history[frame_indices].reshape(-1, 3)
-
-    # Center the point clouds
     src_mean = src_big.mean(dim=0)
     tgt_mean = tgt_big.mean(dim=0)
     src_centered = src_big - src_mean
     tgt_centered = tgt_big - tgt_mean
 
-    # Compute cross-covariance matrix
     H = torch.einsum('ni,nj->ij', src_centered, tgt_centered)
-
-    # SVD decomposition
     U, S, Vt = torch.linalg.svd(H)
-
-    # Compute rotation matrix
     R_ = Vt.T @ U.T
-
-    # Handle reflection case
     if torch.det(R_) < 0:
         Vt[-1, :] *= -1
         R_ = Vt.T @ U.T
-
-    # Compute translation
     t_ = tgt_mean - R_ @ src_mean
-
-    # Create full transformation matrix
     Tmat = torch.eye(4, device=device)
     Tmat[:3, :3] = R_
     Tmat[:3, 3] = t_
-
     return Tmat
 
 
 def calculate_velocity_and_angular_velocity_for_all_frames(
-    all_points_history,
-    dt=0.1,
-    num_neighbors=400,
-    use_savgol=False,
-    savgol_window=5,
-    savgol_poly=2,
-    use_multi_frame=False,
-    window_radius=2
+        all_points_history,
+        dt=0.1,
+        num_neighbors=400,
+        use_savgol=True,
+        savgol_window=5,
+        savgol_poly=2,
+        use_multi_frame=False,
+        window_radius=2,
+        # Added outlier handling parameters
+        v_max_threshold=10.0,  # Maximum allowed linear velocity (m/s)
+        w_max_threshold=30.0,  # Maximum allowed angular velocity (rad/s)
+        use_percentile=False,  # Use percentile-based outlier detection
+        outlier_percentile=95  # Percentile threshold for outliers
 ):
     """
     Compute linear and angular velocity for (T,N,3).
     Returns v_arr, w_arr => (T-1, N, 3).
+
+    Args:
+        all_points_history: Point history of shape (T,N,3)
+        dt: Time step
+        num_neighbors: Number of neighbors for local estimation
+        use_savgol: Whether to apply Savitzky-Golay filtering
+        savgol_window: Window size for Savitzky-Golay filter
+        savgol_poly: Polynomial order for Savitzky-Golay filter
+        use_multi_frame: Whether to use multi-frame rigid fitting
+        window_radius: Radius for multi-frame fitting
+        v_max_threshold: Maximum allowed linear velocity (m/s)
+        w_max_threshold: Maximum allowed angular velocity (rad/s)
+        use_percentile: Use percentile-based outlier detection instead of fixed thresholds
+        outlier_percentile: Percentile threshold for outliers (only used if use_percentile is True)
+
+    Returns:
+        tuple: (v_arr, w_arr) linear and angular velocities of shape (T-1, N, 3)
     """
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     if not isinstance(all_points_history, torch.Tensor):
@@ -140,15 +131,15 @@ def calculate_velocity_and_angular_velocity_for_all_frames(
         K = num_neighbors
 
         src_batch = pts_prev[
-            torch.arange(B, device=device).view(B, 1, 1),
-            neighbor_idx_prev,
-            :
-        ]
+                    torch.arange(B, device=device).view(B, 1, 1),
+                    neighbor_idx_prev,
+                    :
+                    ]
         tar_batch = pts_curr[
-            torch.arange(B, device=device).view(B, 1, 1),
-            neighbor_idx_curr,
-            :
-        ]
+                    torch.arange(B, device=device).view(B, 1, 1),
+                    neighbor_idx_curr,
+                    :
+                    ]
         src_2d = src_batch.reshape(B * N, K, 3)
         tar_2d = tar_batch.reshape(B * N, K, 3)
 
@@ -168,6 +159,56 @@ def calculate_velocity_and_angular_velocity_for_all_frames(
         v_arr = v_2d.reshape(B, N, 3).cpu().numpy()
         w_arr = w_2d.reshape(B, N, 3).cpu().numpy()
 
+    # Convert to numpy arrays for further processing
+    v_arr = np.asarray(v_arr)
+    w_arr = np.asarray(w_arr)
+
+    # Outlier handling for both linear and angular velocities
+    # Compute velocity magnitudes
+    v_magnitudes = np.linalg.norm(v_arr, axis=2)  # (B, N)
+    w_magnitudes = np.linalg.norm(w_arr, axis=2)  # (B, N)
+
+    # Determine thresholds for outliers
+    if use_percentile and B * N > 10:  # Only use percentile if enough data points
+        v_threshold = np.percentile(v_magnitudes, outlier_percentile)
+        w_threshold = np.percentile(w_magnitudes, outlier_percentile)
+
+        # Cap the thresholds to reasonable values
+        v_threshold = min(v_threshold, v_max_threshold)
+        w_threshold = min(w_threshold, w_max_threshold)
+    else:
+        v_threshold = v_max_threshold
+        w_threshold = w_max_threshold
+
+    # Create masks for outliers
+    v_outlier_mask = v_magnitudes > v_threshold  # (B, N)
+    w_outlier_mask = w_magnitudes > w_threshold  # (B, N)
+
+    # Handle outliers in linear velocity
+    for b in range(B):
+        for n in range(N):
+            if v_outlier_mask[b, n]:
+                # Set outlier velocities to zero or a reasonable value
+                # Option 1: Set to zero
+                v_arr[b, n, :] = 0.0
+
+                # Option 2: Scale down to the threshold
+                # scale_factor = v_threshold / v_magnitudes[b, n]
+                # v_arr[b, n, :] *= scale_factor
+
+    # Handle outliers in angular velocity
+    for b in range(B):
+        for n in range(N):
+            if w_outlier_mask[b, n]:
+                # Set outlier angular velocities to zero or a reasonable value
+                # Option 1: Set to zero
+                w_arr[b, n, :] = 0.0
+
+                # Option 2: Scale down to the threshold
+                # scale_factor = w_threshold / w_magnitudes[b, n]
+                # w_arr[b, n, :] *= scale_factor
+
+    # Apply Savitzky-Golay filter if requested
     if use_savgol and (T - 1) >= savgol_window:
         v_arr = savgol_filter(
             v_arr, window_length=savgol_window, polyorder=savgol_poly,
@@ -179,7 +220,92 @@ def calculate_velocity_and_angular_velocity_for_all_frames(
         )
 
     return v_arr, w_arr
-
+# def calculate_velocity_and_angular_velocity_for_all_frames(
+#     all_points_history,
+#     dt=0.1,
+#     num_neighbors=400,
+#     use_savgol=True,
+#     savgol_window=5,
+#     savgol_poly=2,
+#     use_multi_frame=False,
+#     window_radius=2
+# ):
+#     """
+#     Compute linear and angular velocity for (T,N,3).
+#     Returns v_arr, w_arr => (T-1, N, 3).
+#     """
+#     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+#     if not isinstance(all_points_history, torch.Tensor):
+#         all_points_history = torch.tensor(all_points_history, dtype=torch.float32, device=device)
+#     T, N, _ = all_points_history.shape
+#     if T < 2:
+#         return None, None
+#
+#     if use_multi_frame:
+#         # Multi-frame rigid fit
+#         v_list = []
+#         w_list = []
+#         for t in range(T - 1):
+#             center_idx = t + 1
+#             Tmat = multi_frame_rigid_fit(all_points_history, center_idx, window_radius)
+#             Tmat_batch = Tmat.unsqueeze(0)
+#             se3_logs = se3_log_map_batch(Tmat_batch)
+#             se3_v = se3_logs[0, :3] / dt
+#             se3_w = se3_logs[0, 3:] / dt
+#             v_list.append(se3_v.unsqueeze(0).repeat(all_points_history.shape[1], 1))
+#             w_list.append(se3_w.unsqueeze(0).repeat(all_points_history.shape[1], 1))
+#         v_arr = torch.stack(v_list, dim=0).cpu().numpy()
+#         w_arr = torch.stack(w_list, dim=0).cpu().numpy()
+#     else:
+#         # Neighbor-based estimation
+#         pts_prev = all_points_history[:-1]
+#         pts_curr = all_points_history[1:]
+#         B = T - 1
+#         neighbor_idx_prev = find_neighbors_batch(pts_prev, num_neighbors)
+#         neighbor_idx_curr = find_neighbors_batch(pts_curr, num_neighbors)
+#         K = num_neighbors
+#
+#         src_batch = pts_prev[
+#             torch.arange(B, device=device).view(B, 1, 1),
+#             neighbor_idx_prev,
+#             :
+#         ]
+#         tar_batch = pts_curr[
+#             torch.arange(B, device=device).view(B, 1, 1),
+#             neighbor_idx_curr,
+#             :
+#         ]
+#         src_2d = src_batch.reshape(B * N, K, 3)
+#         tar_2d = tar_batch.reshape(B * N, K, 3)
+#
+#         R_2d = estimate_rotation_matrix_batch(src_2d, tar_2d)
+#         c1_2d = src_2d.mean(dim=1)
+#         c2_2d = tar_2d.mean(dim=1)
+#         delta_p_2d = c2_2d - c1_2d
+#
+#         eye_4 = torch.eye(4, device=device).unsqueeze(0).expand(B * N, -1, -1).clone()
+#         eye_4[:, :3, :3] = R_2d
+#         eye_4[:, :3, 3] = delta_p_2d
+#         transform_matrices_2d = eye_4
+#         se3_logs_2d = se3_log_map_batch(transform_matrices_2d)
+#         v_2d = se3_logs_2d[:, :3] / dt
+#         w_2d = se3_logs_2d[:, 3:] / dt
+#
+#         v_arr = v_2d.reshape(B, N, 3).cpu().numpy()
+#         w_arr = w_2d.reshape(B, N, 3).cpu().numpy()
+#
+#     if use_savgol and (T - 1) >= savgol_window:
+#         v_arr = savgol_filter(
+#             v_arr, window_length=savgol_window, polyorder=savgol_poly,
+#             axis=0, mode='mirror'
+#         )
+#         w_arr = savgol_filter(
+#             w_arr, window_length=savgol_window, polyorder=savgol_poly,
+#             axis=0, mode='mirror'
+#         )
+#
+#     return v_arr, w_arr
+#
 
 def point_to_line_distance_batch(points, line_origin, line_dir):
     """Calculate distances from points to a line (batch version)
@@ -764,7 +890,7 @@ def compute_prismatic_info(all_points_history, v_history, omega_history, w_i, de
     global prismatic_axis_reference
 
     all_points_history = torch.as_tensor(all_points_history, dtype=torch.float32, device=device)
-    v_history = torch.as_tensor(v_history, dtype=torch.float32, device=device) if v_history is not None else None
+    # v_history = torch.as_tensor(v_history, dtype=torch.float32, device=device) if v_history is not None else None
     w_i = torch.as_tensor(w_i, dtype=torch.float32, device=device)
 
     T, N = all_points_history.shape[0], all_points_history.shape[1]
@@ -926,9 +1052,138 @@ def normalize_vector_torch(v, eps=1e-6):
     out[mask] = v[mask] / norm_v[mask]
     return out
 
+# def compute_revolute_info(all_points_history, v_history, omega_history, w_i, device='cuda'):
+#     """
+#     Estimate parameters for a revolute joint.
+#
+#     Args:
+#         all_points_history (ndarray): Point history of shape (T,N,3)
+#         v_history (ndarray): Linear velocity history of shape (T-1,N,3)
+#         omega_history (ndarray): Angular velocity history of shape (T-1,N,3)
+#         w_i (ndarray): Point weights of shape (N,)
+#         device (str): Device to use for computation
+#
+#     Returns:
+#         dict: Dictionary containing revolute joint parameters
+#     """
+#     global revolute_axis_reference
+#
+#     all_points_history = torch.as_tensor(all_points_history, dtype=torch.float32, device=device)
+#     v_history = torch.as_tensor(v_history, dtype=torch.float32, device=device)
+#     omega_history = torch.as_tensor(omega_history, dtype=torch.float32, device=device)
+#     w_i = torch.as_tensor(w_i, dtype=torch.float32, device=device)
+#
+#     T, N = all_points_history.shape[0], all_points_history.shape[1]
+#     if T < 2:
+#         return {
+#             "axis": np.array([0., 0., 0.]),
+#             "origin": np.array([0., 0., 0.]),
+#             "motion_limit": (0., 0.)
+#         }
+#
+#     B = T - 1
+#     if B < 1:
+#         return {
+#             "axis": np.array([0., 0., 0.]),
+#             "origin": np.array([0., 0., 0.]),
+#             "motion_limit": (0., 0.)
+#         }
+#
+#     # Reshape for point-wise processing
+#     omega_nbc = omega_history.permute(1, 0, 2).contiguous()
+#
+#     # Compute covariance matrices of angular velocities
+#     covs = torch.einsum('ibm,ibn->imn', omega_nbc, omega_nbc)
+#     covs += 1e-9 * torch.eye(3, device=device)
+#
+#     # Eigen decomposition
+#     eigvals, eigvecs = torch.linalg.eigh(covs)
+#
+#     # Extract principal directions
+#     max_vecs = eigvecs[:, :, 2]
+#     max_vecs = normalize_vector_torch(max_vecs)
+#
+#     # Compute weighted axis
+#     revolve_axis = torch.sum(max_vecs * w_i.unsqueeze(-1), dim=0)
+#     revolve_axis = normalize_vector_torch(revolve_axis.unsqueeze(0))[0]
+#
+#     # Ensure consistent direction with previous estimations
+#     if revolute_axis_reference is None:
+#         revolute_axis_reference = revolve_axis.clone()
+#     else:
+#         dot_val = torch.dot(revolve_axis, revolute_axis_reference)
+#         if dot_val < 0:
+#             revolve_axis = -revolve_axis
+#
+#     # Compute radius and center
+#     eps_ = 1e-8
+#     v_norm = torch.norm(v_history, dim=2)
+#     w_norm = torch.norm(omega_history, dim=2)
+#     mask_w = (w_norm > eps_)
+#
+#     r_mat = torch.zeros_like(v_norm)
+#     r_mat[mask_w] = v_norm[mask_w] / w_norm[mask_w]
+#
+#     v_u = normalize_vector_torch(v_history)
+#     w_u = normalize_vector_torch(omega_history)
+#
+#     dir_ = -torch.cross(v_u, w_u, dim=2)
+#     dir_ = normalize_vector_torch(dir_)
+#
+#     r_3d = r_mat.unsqueeze(-1)
+#     c_pos = all_points_history[:-1] + dir_ * r_3d
+#
+#     # Reshape for robustness
+#     c_pos_nbc = c_pos.permute(1, 0, 2).contiguous()
+#
+#     # Use median for robust center estimation
+#     c_pos_median = c_pos_nbc.median(dim=1).values
+#     dev = torch.norm(c_pos_nbc - c_pos_median.unsqueeze(1), dim=2)
+#     scale = dev.median(dim=1).values + 1e-6
+#
+#     # Compute weights based on deviation
+#     ratio = dev / scale.unsqueeze(-1)
+#     # w_r = 1.0 / (1.0 + ratio * ratio)
+#     w_r = 1.0 / (1.0 + torch.pow(ratio, 3.0))  # 使用更高次幂增强离群点抑制
+#     w_r_3d = w_r.unsqueeze(-1)
+#
+#     # Compute weighted center
+#     c_pos_weighted = c_pos_nbc * w_r_3d
+#     sum_pos = c_pos_weighted.sum(dim=1)
+#     sum_w = w_r.sum(dim=1, keepdim=True) + 1e-6
+#
+#     origin_each = sum_pos / sum_w
+#     origin_sum = torch.sum(origin_each * w_i.unsqueeze(-1), dim=0)
+#
+#     # Compute motion limits
+#     i0 = 0
+#     base_pt = all_points_history[0, i0]
+#     base_vec = base_pt - origin_sum
+#     nb = torch.norm(base_vec) + 1e-6
+#
+#     pts = all_points_history[:, i0, :]
+#     vecs = pts - origin_sum
+#
+#     dotv = torch.sum(vecs * base_vec.unsqueeze(0), dim=1)
+#     norm_v = torch.norm(vecs, dim=1) + 1e-6
+#
+#     cosval = torch.clamp(dotv / (nb * norm_v), -1., 1.)
+#     angles = torch.acos(cosval)
+#     min_a = float(angles.min().item())
+#     max_a = float(angles.max().item())
+#
+#     return {
+#         "axis": revolve_axis.cpu().numpy(),
+#         "origin": origin_sum.cpu().numpy(),
+#         "motion_limit": (min_a, max_a)
+#     }
+
+
 def compute_revolute_info(all_points_history, v_history, omega_history, w_i, device='cuda'):
     """
-    Estimate parameters for a revolute joint.
+    Estimate parameters for a revolute joint:
+    - Use all points' trajectories to estimate axis direction
+    - Use the most significant point to estimate axis position
 
     Args:
         all_points_history (ndarray): Point history of shape (T,N,3)
@@ -942,116 +1197,583 @@ def compute_revolute_info(all_points_history, v_history, omega_history, w_i, dev
     """
     global revolute_axis_reference
 
+    # 转换为张量
     all_points_history = torch.as_tensor(all_points_history, dtype=torch.float32, device=device)
-    v_history = torch.as_tensor(v_history, dtype=torch.float32, device=device)
-    omega_history = torch.as_tensor(omega_history, dtype=torch.float32, device=device)
     w_i = torch.as_tensor(w_i, dtype=torch.float32, device=device)
 
-    T, N = all_points_history.shape[0], all_points_history.shape[1]
-    if T < 2:
+    # 获取形状
+    T, N, _ = all_points_history.shape
+    if T < 3:
         return {
             "axis": np.array([0., 0., 0.]),
             "origin": np.array([0., 0., 0.]),
             "motion_limit": (0., 0.)
         }
 
-    B = T - 1
-    if B < 1:
-        return {
-            "axis": np.array([0., 0., 0.]),
-            "origin": np.array([0., 0., 0.]),
-            "motion_limit": (0., 0.)
-        }
+    # 1. 使用所有点估计轴方向
+    point_trajectories = all_points_history.permute(1, 0, 2)  # (N, T, 3)
+    trajectory_means = torch.mean(point_trajectories, dim=1, keepdim=True)  # (N, 1, 3)
+    centered_trajectories = point_trajectories - trajectory_means  # (N, T, 3)
 
-    # Reshape for point-wise processing
-    omega_nbc = omega_history.permute(1, 0, 2).contiguous()
+    # 批量计算协方差矩阵
+    cov_matrices = torch.bmm(centered_trajectories.transpose(1, 2), centered_trajectories)  # (N, 3, 3)
+    cov_matrices = cov_matrices + 1e-9 * torch.eye(3, device=device).unsqueeze(0)  # 正则化
 
-    # Compute covariance matrices of angular velocities
-    covs = torch.einsum('ibm,ibn->imn', omega_nbc, omega_nbc)
-    covs += 1e-9 * torch.eye(3, device=device)
+    # 批量SVD分解
+    U, S, V = torch.linalg.svd(cov_matrices)
 
-    # Eigen decomposition
-    eigvals, eigvecs = torch.linalg.eigh(covs)
+    # 获取最小特征值对应的特征向量
+    min_eigval_idx = torch.argmin(S, dim=1)  # (N,)
+    axes = torch.stack([V[i, idx] for i, idx in enumerate(min_eigval_idx)], dim=0)  # (N, 3)
 
-    # Extract principal directions
-    max_vecs = eigvecs[:, :, 2]
-    max_vecs = normalize_vector_torch(max_vecs)
+    # 归一化
+    axes = axes / (torch.norm(axes, dim=1, keepdim=True) + 1e-6)
 
-    # Compute weighted axis
-    revolve_axis = torch.sum(max_vecs * w_i.unsqueeze(-1), dim=0)
-    revolve_axis = normalize_vector_torch(revolve_axis.unsqueeze(0))[0]
+    # 确保轴方向一致性
+    reference_axis = axes[0]
+    dot_products = torch.sum(axes * reference_axis.unsqueeze(0), dim=1)
+    axes = torch.where(dot_products.unsqueeze(1) < 0, -axes, axes)
 
-    # Ensure consistent direction with previous estimations
-    if revolute_axis_reference is None:
-        revolute_axis_reference = revolve_axis.clone()
-    else:
-        dot_val = torch.dot(revolve_axis, revolute_axis_reference)
-        if dot_val < 0:
+    # 使用运动显著性加权平均
+    revolve_axis = torch.sum(axes * w_i.unsqueeze(1), dim=0)  # (3)
+    revolve_axis = revolve_axis / torch.norm(revolve_axis)  # 归一化
+
+    # 确保与先前估计的轴方向一致
+    if revolute_axis_reference is not None:
+        if torch.dot(revolve_axis, revolute_axis_reference) < 0:
             revolve_axis = -revolve_axis
+    else:
+        revolute_axis_reference = revolve_axis.clone()
 
-    # Compute radius and center
-    eps_ = 1e-8
-    v_norm = torch.norm(v_history, dim=2)
-    w_norm = torch.norm(omega_history, dim=2)
-    mask_w = (w_norm > eps_)
+    # 2. 找到运动最大的点作为参考点
+    displacements = torch.diff(point_trajectories, dim=1)  # (N, T-1, 3)
+    total_movement = torch.sum(torch.norm(displacements, dim=2), dim=1)  # (N,)
+    most_significant_idx = torch.argmax(total_movement).item()
+    significant_points = point_trajectories[most_significant_idx]  # (T, 3)
 
-    r_mat = torch.zeros_like(v_norm)
-    r_mat[mask_w] = v_norm[mask_w] / w_norm[mask_w]
+    # 3. 构建垂直于轴的坐标系
+    x_axis = torch.tensor([1.0, 0.0, 0.0], device=device)
+    y_axis = torch.tensor([0.0, 1.0, 0.0], device=device)
 
-    v_u = normalize_vector_torch(v_history)
-    w_u = normalize_vector_torch(omega_history)
+    x_cross = torch.linalg.cross(revolve_axis, x_axis)
+    y_cross = torch.linalg.cross(revolve_axis, y_axis)
 
-    dir_ = -torch.cross(v_u, w_u, dim=2)
-    dir_ = normalize_vector_torch(dir_)
+    if torch.norm(x_cross) > torch.norm(y_cross):
+        basis1 = normalize_vector_torch(x_cross.unsqueeze(0))[0]
+    else:
+        basis1 = normalize_vector_torch(y_cross.unsqueeze(0))[0]
 
-    r_3d = r_mat.unsqueeze(-1)
-    c_pos = all_points_history[:-1] + dir_ * r_3d
+    basis2 = torch.linalg.cross(revolve_axis, basis1)
+    basis2 = normalize_vector_torch(basis2.unsqueeze(0))[0]
 
-    # Reshape for robustness
-    c_pos_nbc = c_pos.permute(1, 0, 2).contiguous()
+    # 4. 投影显著点到垂直平面
+    trajectory_mean = torch.mean(significant_points, dim=0)
+    centered_points = significant_points - trajectory_mean
 
-    # Use median for robust center estimation
-    c_pos_median = c_pos_nbc.median(dim=1).values
-    dev = torch.norm(c_pos_nbc - c_pos_median.unsqueeze(1), dim=2)
-    scale = dev.median(dim=1).values + 1e-6
+    projected_points = torch.zeros((T, 2), device=device)
+    for i in range(T):
+        p = centered_points[i]
+        # 减去轴向分量
+        p_proj = p - torch.dot(p, revolve_axis) * revolve_axis
+        # 在基向量上的投影作为坐标
+        x_coord = torch.dot(p_proj, basis1)
+        y_coord = torch.dot(p_proj, basis2)
+        projected_points[i] = torch.tensor([x_coord, y_coord])
 
-    # Compute weights based on deviation
-    ratio = dev / scale.unsqueeze(-1)
-    # w_r = 1.0 / (1.0 + ratio * ratio)
-    w_r = 1.0 / (1.0 + torch.pow(ratio, 3.0))  # 使用更高次幂增强离群点抑制
-    w_r_3d = w_r.unsqueeze(-1)
+    # 5. 代数圆拟合
+    def fit_circle_algebraic(points):
+        """使用最小二乘法的代数圆拟合"""
+        points = points.cpu().numpy()
+        A = np.column_stack([
+            points[:, 0] * 2,
+            points[:, 1] * 2,
+            np.ones(len(points))
+        ])
+        b = points[:, 0] ** 2 + points[:, 1] ** 2
 
-    # Compute weighted center
-    c_pos_weighted = c_pos_nbc * w_r_3d
-    sum_pos = c_pos_weighted.sum(dim=1)
-    sum_w = w_r.sum(dim=1, keepdim=True) + 1e-6
+        try:
+            solution = np.linalg.lstsq(A, b, rcond=None)[0]
+            center_x, center_y = solution[0], solution[1]
+            c = solution[2]
+            radius = np.sqrt(c + center_x ** 2 + center_y ** 2)
+            return np.array([center_x, center_y]), radius
+        except:
+            return None, None
 
-    origin_each = sum_pos / sum_w
-    origin_sum = torch.sum(origin_each * w_i.unsqueeze(-1), dim=0)
+    def compute_circle_residuals(points, center, radius):
+        """计算点到圆的残差"""
+        points_np = points.cpu().numpy()
+        dists = np.sqrt(np.sum((points_np - center.reshape(1, 2)) ** 2, axis=1))
+        return np.abs(dists - radius)
 
-    # Compute motion limits
-    i0 = 0
-    base_pt = all_points_history[0, i0]
-    base_vec = base_pt - origin_sum
-    nb = torch.norm(base_vec) + 1e-6
+    # 6. 使用RANSAC拟合圆
+    def ransac_circle_fit(points, max_iterations=100, distance_threshold=0.05, min_inliers_ratio=0.5):
+        points_np = points.cpu().numpy()
+        best_inliers = 0
+        best_center = None
+        best_radius = None
+        n_points = len(points_np)
+        min_inliers = int(n_points * min_inliers_ratio)
 
-    pts = all_points_history[:, i0, :]
-    vecs = pts - origin_sum
+        # 首先尝试全局拟合
+        center, radius = fit_circle_algebraic(points)
+        if center is not None:
+            residuals = compute_circle_residuals(points, center, radius)
+            inliers = np.sum(residuals < distance_threshold)
+            if inliers >= min_inliers:
+                best_center = center
+                best_radius = radius
+                best_inliers = inliers
 
-    dotv = torch.sum(vecs * base_vec.unsqueeze(0), dim=1)
-    norm_v = torch.norm(vecs, dim=1) + 1e-6
+        # 如果全局拟合失败，使用RANSAC
+        if best_center is None:
+            for _ in range(max_iterations):
+                sample_indices = np.random.choice(n_points, min(n_points, 5), replace=False)
+                sample_points = points[sample_indices]
 
-    cosval = torch.clamp(dotv / (nb * norm_v), -1., 1.)
-    angles = torch.acos(cosval)
-    min_a = float(angles.min().item())
-    max_a = float(angles.max().item())
+                center, radius = fit_circle_algebraic(sample_points)
+                if center is None:
+                    continue
+
+                residuals = compute_circle_residuals(points, center, radius)
+                inliers = np.sum(residuals < distance_threshold)
+
+                if inliers > best_inliers:
+                    best_inliers = inliers
+                    best_center = center
+                    best_radius = radius
+
+        return best_center, best_radius, best_inliers
+
+    # 执行圆拟合
+    best_center, best_radius, n_inliers = ransac_circle_fit(
+        projected_points,
+        max_iterations=100,
+        distance_threshold=0.05,
+        min_inliers_ratio=0.5
+    )
+
+    # 7. 转换回3D坐标
+    if best_center is not None and n_inliers > max(3, T // 4):
+        center_3d = (
+                trajectory_mean +
+                best_center[0] * basis1 +
+                best_center[1] * basis2
+        )
+    else:
+        # 回退方案
+        center_3d = trajectory_mean
+        axis_proj = torch.dot(center_3d, revolve_axis) * revolve_axis
+        center_3d = axis_proj
+
+    # 8. 计算运动限制
+    base_pt = significant_points[0]
+    base_vec = base_pt - center_3d
+    base_vec = base_vec - torch.dot(base_vec, revolve_axis) * revolve_axis
+    base_norm = torch.norm(base_vec) + 1e-6
+
+    angles = []
+    for i in range(T):
+        pos = significant_points[i]
+        vec = pos - center_3d
+        vec = vec - torch.dot(vec, revolve_axis) * revolve_axis
+        vec_norm = torch.norm(vec) + 1e-6
+
+        cos_angle = torch.clamp(
+            torch.dot(vec, base_vec) / (vec_norm * base_norm),
+            -1., 1.
+        )
+        angle = torch.acos(cos_angle)
+
+        cross_prod = torch.linalg.cross(base_vec, vec)
+        sign = torch.sign(torch.dot(cross_prod, revolve_axis))
+        signed_angle = angle * sign
+        angles.append(signed_angle.item())
+
+    min_angle = min(angles) if angles else 0.0
+    max_angle = max(angles) if angles else 0.0
 
     return {
         "axis": revolve_axis.cpu().numpy(),
-        "origin": origin_sum.cpu().numpy(),
-        "motion_limit": (min_a, max_a)
+        "origin": center_3d.cpu().numpy(),
+        "motion_limit": (min_angle, max_angle)
     }
 
+
+
+
+# def compute_revolute_info(all_points_history, v_history, omega_history, w_i, device='cuda'):
+#     """
+#     使用运动最显著的一个点计算旋转关节参数
+#     """
+#     import math
+#     global revolute_axis_reference
+#
+#     # 转换为张量
+#     all_points_history = torch.as_tensor(all_points_history, dtype=torch.float32, device=device)
+#     w_i = torch.as_tensor(w_i, dtype=torch.float32, device=device)
+#
+#     # 获取形状
+#     T, N, _ = all_points_history.shape
+#
+#     if T < 3:
+#         return {
+#             "axis": np.array([0., 0., 0.]),
+#             "origin": np.array([0., 0., 0.]),
+#             "motion_limit": (0., 0.)
+#         }
+#
+#     # 1. 找出运动最显著的点
+#     # 计算每个点的总位移作为运动显著性指标
+#     point_trajectories = all_points_history.permute(1, 0, 2)  # (N, T, 3)
+#     displacements = torch.diff(point_trajectories, dim=1)  # (N, T-1, 3)
+#     total_movement = torch.sum(torch.norm(displacements, dim=2), dim=1)  # (N,)
+#
+#     # 找出运动最显著的点索引
+#     most_significant_idx = torch.argmax(total_movement).item()
+#
+#     # 获取最显著点的轨迹
+#     significant_trajectory = point_trajectories[most_significant_idx]  # (T, 3)
+#
+#     # 2. 使用最显著点计算旋转轴
+#     # 中心化轨迹
+#     trajectory_mean = torch.mean(significant_trajectory, dim=0, keepdim=True)  # (1, 3)
+#     centered_trajectory = significant_trajectory - trajectory_mean  # (T, 3)
+#
+#     # 计算协方差矩阵
+#     cov_matrix = torch.matmul(centered_trajectory.transpose(0, 1), centered_trajectory)  # (3, 3)
+#     cov_matrix = cov_matrix + 1e-9 * torch.eye(3, device=device)  # 添加正则化
+#
+#     # SVD分解
+#     U, S, V = torch.linalg.svd(cov_matrix)
+#
+#     # 获取最小特征值对应的特征向量作为旋转轴方向
+#     min_eigval_idx = torch.argmin(S)
+#     axis = V[min_eigval_idx]
+#
+#     # 归一化轴方向
+#     axis = axis / torch.norm(axis)
+#
+#     # 确保与先前估计的轴方向一致
+#     if revolute_axis_reference is not None:
+#         dot_val = torch.dot(axis, revolute_axis_reference)
+#         if dot_val < 0:
+#             axis = -axis
+#     else:
+#         revolute_axis_reference = axis.clone()
+#
+#     # 3. 使用最显著点的三个连续帧计算旋转中心
+#     centers = []
+#
+#     # 专用Z轴旋转函数
+#     def rotateZ(vec, rad):
+#         return torch.tensor([
+#             vec[0] * math.cos(rad) - vec[1] * math.sin(rad),
+#             vec[0] * math.sin(rad) + vec[1] * math.cos(rad),
+#             vec[2]
+#         ], dtype=torch.float32, device=device)
+#
+#     # 对每三个连续帧计算旋转中心
+#     for t in range(T - 2):
+#         # 获取三个连续帧的位置
+#         c1 = significant_trajectory[t]  # (3)
+#         c2 = significant_trajectory[t + 1]  # (3)
+#         c3 = significant_trajectory[t + 2]  # (3)
+#
+#         # 计算位移向量
+#         v_12 = c2 - c1  # (3)
+#         v_13 = c3 - c1  # (3)
+#
+#         # 计算法向量
+#         n_ = torch.linalg.cross(v_12, v_13)  # (3)
+#         nn = torch.norm(n_)
+#
+#         # 跳过数值不稳定的情况
+#         if nn < 1e-6:
+#             continue
+#
+#         n_ = n_ / nn
+#
+#         # 构建平面坐标系
+#         plane_x = v_12 / (torch.norm(v_12) + 1e-6)
+#         plane_y = v_13 - torch.dot(v_13, plane_x) * plane_x
+#         ny = torch.norm(plane_y)
+#
+#         if ny < 1e-6:
+#             continue
+#
+#         plane_y = plane_y / ny
+#         plane_z = torch.linalg.cross(plane_x, plane_y)
+#
+#         # 构建坐标系变换矩阵
+#         plane_rot = torch.eye(4, dtype=torch.float32, device=device)
+#         plane_rot[:3, 0] = plane_x
+#         plane_rot[:3, 1] = plane_y
+#         plane_rot[:3, 2] = plane_z
+#         plane_rot[:3, 3] = c1
+#
+#         # 坐标系逆变换
+#         plane_inv = torch.eye(4, dtype=torch.float32, device=device)
+#         plane_inv[:3, :3] = plane_rot[:3, :3].transpose(0, 1)
+#         plane_inv[:3, 3] = -torch.matmul(plane_rot[:3, :3].transpose(0, 1), c1)
+#
+#         # 将点变换到局部坐标系
+#         p1_local = torch.cat([c1, torch.tensor([1.0], device=device)])
+#         p2_local = torch.cat([c2, torch.tensor([1.0], device=device)])
+#         p3_local = torch.cat([c3, torch.tensor([1.0], device=device)])
+#
+#         p1_local = torch.matmul(plane_inv, p1_local)
+#         p2_local = torch.matmul(plane_inv, p2_local)
+#         p3_local = torch.matmul(plane_inv, p3_local)
+#
+#         # 计算中点
+#         c1_ = 0.5 * (p1_local[:3] + p2_local[:3])
+#         c2_ = 0.5 * (p1_local[:3] + p3_local[:3])
+#
+#         # 使用rotateZ计算垂直方向
+#         p21 = rotateZ(p2_local[:3] - p1_local[:3], math.pi / 2.0)
+#         p43 = rotateZ(p3_local[:3] - p1_local[:3], math.pi / 2.0)
+#
+#         # 设置方程组 A * x = b - 只使用XY坐标
+#         A = torch.stack([p21[:2], -p43[:2]], dim=1)
+#         b = (c2_[:2] - c1_[:2])
+#
+#         # 求解中垂线交点
+#         try:
+#             if torch.abs(torch.det(A)) < 1e-6:
+#                 continue
+#
+#             lam = torch.linalg.solve(A, b)
+#             onplane_center = c1_[:2] + lam[0] * p21[:2]
+#
+#             # 重建三维点 - 平面坐标系下的中心点
+#             plane_center_4 = torch.tensor([
+#                 onplane_center[0].item(),
+#                 onplane_center[1].item(),
+#                 c1_[2].item(),
+#                 1.0
+#             ], dtype=torch.float32, device=device)
+#
+#             # 转换回世界坐标系
+#             center_world_4 = torch.matmul(plane_rot, plane_center_4)
+#             center = center_world_4[:3]
+#
+#             centers.append(center)
+#         except:
+#             continue
+#
+#     # 如果有计算结果，取平均值作为最终旋转中心
+#     if len(centers) > 0:
+#         centers = torch.stack(centers, dim=0)  # (K, 3)
+#         origin = torch.mean(centers, dim=0)  # (3)
+#     else:
+#         # 如果没有有效计算结果，使用最显著点第一帧位置作为近似中心
+#         origin = significant_trajectory[0]
+#
+#     # 4. 使用最显著点计算运动限制
+#     base_pt = significant_trajectory[0]
+#     base_vec = base_pt - origin
+#     nb = torch.norm(base_vec) + 1e-6
+#
+#     vecs = significant_trajectory - origin.unsqueeze(0)  # (T, 3)
+#
+#     dotv = torch.sum(vecs * base_vec.unsqueeze(0), dim=1)  # (T,)
+#     norm_v = torch.norm(vecs, dim=1) + 1e-6  # (T,)
+#
+#     cosval = torch.clamp(dotv / (nb * norm_v), -1., 1.)  # (T,)
+#     angles = torch.acos(cosval)  # (T,)
+#     min_a = float(angles.min().item())
+#     max_a = float(angles.max().item())
+#
+#     return {
+#         "axis": axis.cpu().numpy(),
+#         "origin": origin.cpu().numpy(),
+#         "motion_limit": (min_a, max_a)
+#     }
+
+# def compute_revolute_info(all_points_history, v_history, omega_history, w_i, device='cuda'):
+#     """
+#     使用PyTorch高效计算旋转关节参数
+#     """
+#     global revolute_axis_reference
+#
+#     # 转换为张量
+#     all_points_history = torch.as_tensor(all_points_history, dtype=torch.float32, device=device)
+#     w_i = torch.as_tensor(w_i, dtype=torch.float32, device=device)
+#
+#     # 获取形状
+#     T, N, _ = all_points_history.shape
+#
+#     # 1. 计算旋转轴方向 - 使用批处理SVD
+#     point_trajectories = all_points_history.permute(1, 0, 2)  # (N, T, 3)
+#     trajectory_means = torch.mean(point_trajectories, dim=1, keepdim=True)  # (N, 1, 3)
+#     centered_trajectories = point_trajectories - trajectory_means  # (N, T, 3)
+#
+#     # 批量计算协方差矩阵
+#     cov_matrices = torch.bmm(centered_trajectories.transpose(1, 2), centered_trajectories)  # (N, 3, 3)
+#
+#     # 添加正则化
+#     cov_matrices = cov_matrices + 1e-9 * torch.eye(3, device=device).unsqueeze(0)  # (N, 3, 3)
+#
+#     # 批量SVD分解
+#     U, S, V = torch.linalg.svd(cov_matrices)
+#
+#     # 获取最小特征值对应的特征向量
+#     min_eigval_idx = torch.argmin(S, dim=1)  # (N,)
+#
+#     # 提取每个点的旋转轴方向
+#     axes = torch.stack([V[i, idx] for i, idx in enumerate(min_eigval_idx)], dim=0)  # (N, 3)
+#
+#     # 归一化
+#     axes = axes / (torch.norm(axes, dim=1, keepdim=True) + 1e-6)
+#
+#     # 确保轴方向一致性
+#     reference_axis = axes[0]
+#     dot_products = torch.sum(axes * reference_axis.unsqueeze(0), dim=1)
+#     axes = torch.where(dot_products.unsqueeze(1) < 0, -axes, axes)
+#
+#     # 使用运动显著性对轴方向进行加权平均
+#     weighted_axis = torch.sum(axes * w_i.unsqueeze(1), dim=0)  # (3)
+#     weighted_axis = weighted_axis / torch.norm(weighted_axis)  # 归一化
+#
+#     # 确保与先前估计的轴方向一致
+#     if revolute_axis_reference is not None:
+#         dot_val = torch.dot(weighted_axis, revolute_axis_reference)
+#         if dot_val < 0:
+#             weighted_axis = -weighted_axis
+#     else:
+#         revolute_axis_reference = weighted_axis.clone()
+#
+#     # 2. 高效计算旋转中心 - 关键修复部分
+#     centers = []
+#
+#     # 专用Z轴旋转函数，与RevoluteModel中的rotateZ功能相同
+#     def rotateZ(vec, rad):
+#         return torch.tensor([
+#             vec[0] * math.cos(rad) - vec[1] * math.sin(rad),
+#             vec[0] * math.sin(rad) + vec[1] * math.cos(rad),
+#             vec[2]
+#         ], dtype=torch.float32, device=device)
+#
+#     for i in range(N):
+#         for t in range(T - 2):
+#             # 获取三个连续帧的位置
+#             c1 = all_points_history[t, i]  # (3)
+#             c2 = all_points_history[t + 1, i]  # (3)
+#             c3 = all_points_history[t + 2, i]  # (3)
+#
+#             # 计算位移向量
+#             v_12 = c2 - c1  # (3)
+#             v_13 = c3 - c1  # (3)
+#
+#             # 计算法向量
+#             n_ = torch.linalg.cross(v_12, v_13)  # (3)
+#             nn = torch.norm(n_)
+#
+#             # 跳过数值不稳定的情况
+#             if nn < 1e-6:
+#                 continue
+#
+#             n_ = n_ / nn
+#
+#             # 构建平面坐标系 - 这是关键修复部分
+#             plane_x = v_12 / (torch.norm(v_12) + 1e-6)
+#             plane_y = v_13 - torch.dot(v_13, plane_x) * plane_x
+#             ny = torch.norm(plane_y)
+#
+#             if ny < 1e-6:
+#                 continue
+#
+#             plane_y = plane_y / ny
+#             plane_z = torch.linalg.cross(plane_x, plane_y)
+#
+#             # 构建坐标系变换矩阵
+#             plane_rot = torch.eye(4, dtype=torch.float32, device=device)
+#             plane_rot[:3, 0] = plane_x
+#             plane_rot[:3, 1] = plane_y
+#             plane_rot[:3, 2] = plane_z
+#             plane_rot[:3, 3] = c1
+#
+#             # 坐标系逆变换
+#             plane_inv = torch.eye(4, dtype=torch.float32, device=device)
+#             plane_inv[:3, :3] = plane_rot[:3, :3].transpose(0, 1)
+#             plane_inv[:3, 3] = -torch.matmul(plane_rot[:3, :3].transpose(0, 1), c1)
+#
+#             # 将点变换到局部坐标系
+#             p1_local = torch.cat([c1, torch.tensor([1.0], device=device)])
+#             p2_local = torch.cat([c2, torch.tensor([1.0], device=device)])
+#             p3_local = torch.cat([c3, torch.tensor([1.0], device=device)])
+#
+#             p1_local = torch.matmul(plane_inv, p1_local)
+#             p2_local = torch.matmul(plane_inv, p2_local)
+#             p3_local = torch.matmul(plane_inv, p3_local)
+#
+#             # 计算中点
+#             c1_ = 0.5 * (p1_local[:3] + p2_local[:3])
+#             c2_ = 0.5 * (p1_local[:3] + p3_local[:3])
+#
+#             # 使用rotateZ而不是任意轴旋转
+#             p21 = rotateZ(p2_local[:3] - p1_local[:3], math.pi / 2.0)
+#             p43 = rotateZ(p3_local[:3] - p1_local[:3], math.pi / 2.0)
+#
+#             # 设置方程组 A * x = b - 只使用XY坐标
+#             A = torch.stack([p21[:2], -p43[:2]], dim=1)
+#             b = (c2_[:2] - c1_[:2])
+#
+#             # 求解中垂线交点
+#             try:
+#                 if torch.abs(torch.det(A)) < 1e-6:
+#                     continue
+#
+#                 lam = torch.linalg.solve(A, b)
+#                 onplane_center = c1_[:2] + lam[0] * p21[:2]
+#
+#                 # 重建三维点 - 平面坐标系下的中心点
+#                 plane_center_4 = torch.tensor([
+#                     onplane_center[0].item(),
+#                     onplane_center[1].item(),
+#                     c1_[2].item(),
+#                     1.0
+#                 ], dtype=torch.float32, device=device)
+#
+#                 # 转换回世界坐标系 - 这是修复的关键
+#                 center_world_4 = torch.matmul(plane_rot, plane_center_4)
+#                 center = center_world_4[:3]
+#
+#                 centers.append(center)
+#             except:
+#                 continue
+#
+#     # 如果有计算结果，直接平均
+#     if len(centers) > 0:
+#         centers = torch.stack(centers, dim=0)  # (K, 3)
+#         origin_sum = torch.mean(centers, dim=0)  # 使用平均值
+#     else:
+#         # 如果没有有效计算结果使用第一帧平均位置
+#         origin_sum = torch.mean(all_points_history[0], dim=0)
+#
+#     # 3. 计算运动限制
+#     i0 = 0
+#     base_pt = all_points_history[0, i0]
+#     base_vec = base_pt - origin_sum
+#     nb = torch.norm(base_vec) + 1e-6
+#
+#     pts = all_points_history[:, i0, :]
+#     vecs = pts - origin_sum
+#
+#     dotv = torch.sum(vecs * base_vec.unsqueeze(0), dim=1)
+#     norm_v = torch.norm(vecs, dim=1) + 1e-6
+#
+#     cosval = torch.clamp(dotv / (nb * norm_v), -1., 1.)
+#     angles = torch.acos(cosval)
+#     min_a = float(angles.min().item())
+#     max_a = float(angles.max().item())
+#
+#     return {
+#         "axis": weighted_axis.cpu().numpy(),
+#         "origin": origin_sum.cpu().numpy(),
+#         "motion_limit": (min_a, max_a)
+#     }
 
 def compute_joint_info_all_types(
         all_points_history,

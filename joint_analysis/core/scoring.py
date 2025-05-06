@@ -6,6 +6,7 @@ import torch
 import numpy as np
 
 
+
 def super_gaussian(x, sigma, order):
     """
     Super-Gaussian function: exp(-(|x|/sigma)^order).
@@ -149,95 +150,33 @@ def find_neighbors_batch(pcd_batch: torch.Tensor, num_neighbor_pts: int):
 
 def compute_velocity_angular_one_step_3d(pts_prev, pts_curr, dt, num_neighbors=50):
     """
-    Compute linear and angular velocities between two consecutive frames.
-
-    Args:
-        pts_prev (Tensor): Points in previous frame of shape (N,3)
-        pts_curr (Tensor): Points in current frame of shape (N,3)
-        dt (float): Time step
-        num_neighbors (int): Number of neighbors to use for local transformation estimation
-
-    Returns:
-        tuple: (linear_velocity, angular_velocity) each of shape (3,)
+    对两帧 (N,3) 点云做邻域匹配 => 求出 平均 线速度3D、平均 角速度3D
     """
     device = pts_prev.device
-
-    # Find nearest neighbors
+    N = pts_prev.shape[0]
     neighbor_idx_prev = find_neighbors_batch(pts_prev.unsqueeze(0), num_neighbors)[0]  # (N,k)
     neighbor_idx_curr = find_neighbors_batch(pts_curr.unsqueeze(0), num_neighbors)[0]  # (N,k)
 
-    # Get neighbor points
     src_batch = pts_prev[neighbor_idx_prev]  # (N,k,3)
     tar_batch = pts_curr[neighbor_idx_curr]  # (N,k,3)
-
-    # Estimate rotation matrices
+    # SVD
     R_2d = estimate_rotation_matrix_batch(src_batch, tar_batch)
     c1_2d = src_batch.mean(dim=1)
     c2_2d = tar_batch.mean(dim=1)
     delta_p_2d = c2_2d - c1_2d
 
-    # Create SE(3) transformation matrices
-    eye_4 = torch.eye(4, device=device).unsqueeze(0).expand(pts_prev.shape[0], -1, -1).clone()
+    eye_4 = torch.eye(4, device=device).unsqueeze(0).expand(N, -1, -1).clone()
     eye_4[:, :3, :3] = R_2d
     eye_4[:, :3, 3] = delta_p_2d
-
-    # Convert to twist coordinates
     se3_logs = se3_log_map_batch(eye_4)  # (N,6)
-
-    # Extract linear and angular velocities
+    # 前3维是平移向量, 后3维是旋转向量
     trans_local = se3_logs[:, :3] / dt  # (N,3)
-    rot_local = se3_logs[:, 3:] / dt  # (N,3)
+    rot_local = se3_logs[:, 3:] / dt    # (N,3)
 
-    # Average over all points
+    # 对N个点取平均
     v_mean = trans_local.mean(dim=0)  # (3,)
-    w_mean = rot_local.mean(dim=0)  # (3,)
-
+    w_mean = rot_local.mean(dim=0)    # (3,)
     return v_mean.cpu().numpy(), w_mean.cpu().numpy()
-
-# def compute_velocity_angular_one_step_3d(pts_prev, pts_curr, dt=0.1, num_neighbors=50):
-#     """
-#     Compute linear and angular velocities between two consecutive frames.
-#     Works with both PyTorch tensors and NumPy arrays.
-#     """
-#     # Check if inputs are PyTorch tensors, if not convert them
-#     if not isinstance(pts_prev, torch.Tensor):
-#         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-#         pts_prev = torch.tensor(pts_prev, dtype=torch.float32, device=device)
-#         pts_curr = torch.tensor(pts_curr, dtype=torch.float32, device=device)
-#         tensor_converted = True
-#     else:
-#         tensor_converted = False
-#         device = pts_prev.device
-#
-#     # Original PyTorch calculation
-#     N = pts_prev.shape[0]
-#     neighbor_idx_prev = find_neighbors_batch(pts_prev.unsqueeze(0), num_neighbors)[0]  # (N,k)
-#     neighbor_idx_curr = find_neighbors_batch(pts_curr.unsqueeze(0), num_neighbors)[0]  # (N,k)
-#
-#     src_batch = pts_prev[neighbor_idx_prev]  # (N,k,3)
-#     tar_batch = pts_curr[neighbor_idx_curr]  # (N,k,3)
-#
-#     # SVD
-#     R_2d = estimate_rotation_matrix_batch(src_batch, tar_batch)
-#     c1_2d = src_batch.mean(dim=1)
-#     c2_2d = tar_batch.mean(dim=1)
-#     delta_p_2d = c2_2d - c1_2d
-#
-#     eye_4 = torch.eye(4, device=device).unsqueeze(0).expand(N, -1, -1).clone()
-#     eye_4[:, :3, :3] = R_2d
-#     eye_4[:, :3, 3] = delta_p_2d
-#     se3_logs = se3_log_map_batch(eye_4)  # (N,6)
-#
-#     # 前3维是平移向量, 后3维是旋转向量
-#     trans_local = se3_logs[:, :3] / dt  # (N,3)
-#     rot_local = se3_logs[:, 3:] / dt  # (N,3)
-#
-#     # 对N个点取平均
-#     v_mean = trans_local.mean(dim=0)  # (3,)
-#     w_mean = rot_local.mean(dim=0)  # (3,)
-#
-#     return v_mean.cpu().numpy(), w_mean.cpu().numpy()
-
 
 def compute_position_average_3d(pts):
     """
@@ -340,39 +279,6 @@ def compute_basic_scores(
             ratio_col[mask_svd] = s2[mask_svd] / s1[mask_svd]
             col_score = super_gaussian(ratio_col, col_sigma, col_order)
 
-    # ----------------------------
-    # (B) Radius consistency score
-    # ----------------------------
-    # rad_score = torch.zeros(N, device=device)
-    #
-    # if Tm1 > 0:
-    #     # Calculate radius r = v / w for frames where w is significant
-    #     v_mag = torch.norm(v_clean, dim=2)  # (T-1, N)
-    #     w_mag = torch.norm(w_clean, dim=2)  # (T-1, N)
-    #
-    #     # Identify frames with significant angular velocity
-    #     valid_mask = (w_mag >= omega_thresh)
-    #     r_mat = torch.zeros_like(v_mag)
-    #     r_mat[valid_mask] = v_mag[valid_mask] / w_mag[valid_mask]
-    #
-    #     # Compute radius consistency score for each point
-    #     final_scores = torch.zeros(N, device=device)
-    #
-    #     for i in range(N):
-    #         # Find frames with valid angular velocity for this point
-    #         valid_frames_i = valid_mask[:, i]  # shape (T-1,)
-    #         # Get radius values for those frames
-    #         r_vals_i = r_mat[valid_frames_i, i]
-    #
-    #         # Skip points with insufficient valid frames
-    #         if r_vals_i.numel() <= 1:
-    #             final_scores[i] = 0.0
-    #         else:
-    #             # Compute variance of radius and convert to score
-    #             var_r_i = torch.var(r_vals_i, unbiased=False)
-    #             final_scores[i] = super_gaussian(var_r_i, rad_sigma, rad_order)
-    #
-    #     rad_score = final_scores
     rad_score = torch.zeros(N, device=device)
     if Tm1 > 1:
         EPS_W = 1e-3

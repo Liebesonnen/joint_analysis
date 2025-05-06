@@ -8,8 +8,6 @@ import numpy as np
 import threading
 import polyscope as ps
 import polyscope.imgui as psim
-from typing import Dict, List, Optional, Callable, Any, Union
-
 from .core.geometry import generate_ball_joint_points, generate_hollow_cylinder
 from .core.joint_estimation import compute_joint_info_all_types
 from .viz.polyscope_viz import PolyscopeVisualizer
@@ -383,6 +381,25 @@ class JointAnalysisApp:
         for name, data in self.real_data.items():
             if data is not None and len(data) > 0:
                 self.ps_viz.register_point_cloud(name, data[0], enabled=False)
+
+    def format_error_str(pos_err_mm: float, ang_err_rad: float) -> str:
+        """格式化错误信息字符串
+
+        Args:
+            pos_err_mm: 位置误差(毫米)
+            ang_err_rad: 角度误差(弧度)
+
+        Returns:
+            str: 格式化的错误信息
+        """
+        # 将角度误差转换为度
+        ang_err_deg = np.degrees(ang_err_rad)
+
+        # 创建错误信息字符串
+        err_str = f"Position Error: {pos_err_mm:.2f} mm, "
+        err_str += f"Angular Error: {ang_err_rad:.3f} rad ({ang_err_deg:.2f}°)"
+
+        return err_str
 
     def _compute_error_for_mode(self, mode: str, param_dict: Dict[str, Dict[str, Any]]) -> Tuple[float, float]:
         """
@@ -887,81 +904,91 @@ class JointAnalysisApp:
 
         # Increment frame counter
         self.frame_count_per_mode[mode] += 1
-        if fidx >= 0 and current_points is not None and prev_points is not None:
-            # Convert NumPy arrays to PyTorch tensors
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            prev_points_tensor = torch.tensor(prev_points, dtype=torch.float32, device=device)
-            current_points_tensor = torch.tensor(current_points, dtype=torch.float32, device=device)
-
-            # Call the original function with PyTorch tensors
-            v_meas_3d, w_meas_3d = compute_velocity_angular_one_step_3d(
-                prev_points_tensor, current_points_tensor, dt=0.1, num_neighbors=self.neighbor_k
+        sequence = self.ps_viz.get_point_cloud_sequence()
+        if sequence is not None and sequence.shape[0] >= 2:
+            # Run joint estimation which also calculates velocities and motion salience
+            param_dict, best_type, scores_info = compute_joint_info_all_types(
+                sequence,
+                neighbor_k=self.neighbor_k,
+                col_sigma=self.col_sigma, col_order=self.col_order,
+                cop_sigma=self.cop_sigma, cop_order=self.cop_order,
+                rad_sigma=self.rad_sigma, rad_order=self.rad_order,
+                zp_sigma=self.zp_sigma, zp_order=self.zp_order,
+                prob_sigma=self.prob_sigma, prob_order=self.prob_order,
+                prismatic_sigma=self.prismatic_sigma, prismatic_order=self.prismatic_order,
+                planar_sigma=self.planar_sigma, planar_order=self.planar_order,
+                revolute_sigma=self.revolute_sigma, revolute_order=self.revolute_order,
+                screw_sigma=self.screw_sigma, screw_order=self.screw_order,
+                ball_sigma=self.ball_sigma, ball_order=self.ball_order,
+                use_savgol=self.use_savgol_filter,
+                savgol_window=self.savgol_window_length,
+                savgol_poly=self.savgol_polyorder,
+                use_multi_frame=self.use_multi_frame_fit,
+                multi_frame_window_radius=self.multi_frame_radius
             )
 
-            # The rest of your code remains the same
-            vel_mag = np.linalg.norm(v_meas_3d)
-            ang_mag = np.linalg.norm(w_meas_3d)
+            # Update current best joint
+            self.current_best_joint = best_type
 
-            # Update GUI data - still showing linearly increasing values
-            if self.use_gui and self.gui:
-                self.gui.add_velocity_data(mode, vel_mag, ang_mag)
-            # 运行关节类型估计（如果我们有序列）
-            sequence = self.ps_viz.get_point_cloud_sequence()
-            if sequence is not None and sequence.shape[0] >= 2:
-                # 运行关节估计
-                param_dict, best_type, scores_info = compute_joint_info_all_types(
-                    sequence,
-                    neighbor_k=self.neighbor_k,
-                    col_sigma=self.col_sigma, col_order=self.col_order,
-                    cop_sigma=self.cop_sigma, cop_order=self.cop_order,
-                    rad_sigma=self.rad_sigma, rad_order=self.rad_order,
-                    zp_sigma=self.zp_sigma, zp_order=self.zp_order,
-                    prob_sigma=self.prob_sigma, prob_order=self.prob_order,
-                    prismatic_sigma=self.prismatic_sigma, prismatic_order=self.prismatic_order,
-                    planar_sigma=self.planar_sigma, planar_order=self.planar_order,
-                    revolute_sigma=self.revolute_sigma, revolute_order=self.revolute_order,
-                    screw_sigma=self.screw_sigma, screw_order=self.screw_order,
-                    ball_sigma=self.ball_sigma, ball_order=self.ball_order,
-                    use_savgol=self.use_savgol_filter,
-                    savgol_window=self.savgol_window_length,
-                    savgol_poly=self.savgol_polyorder,
-                    use_multi_frame=self.use_multi_frame_fit,
-                    multi_frame_window_radius=self.multi_frame_radius
-                )
+            if best_type in param_dict:
+                self.current_joint_params = param_dict[best_type]
 
-                # Update current best joint
-                self.current_best_joint = best_type
+                # Update joint visualization
+                self.ps_viz.set_joint_estimation_result(best_type, param_dict[best_type])
 
-                if best_type in param_dict:
-                    self.current_joint_params = param_dict[best_type]
+                # Show ground truth for comparison (for synthetic data)
+                if mode in self.gt_data:
+                    gt_info = self.gt_data[mode]
+                    self.ps_viz.show_ground_truth(gt_info["type"], gt_info["params"])
 
-                    # Update joint visualization
-                    self.ps_viz.set_joint_estimation_result(best_type, param_dict[best_type])
+            # Compute errors compared to ground truth
+            pos_err, ang_err = self._compute_error_for_mode(mode, param_dict)
 
-                    # Show ground truth for comparison (for synthetic data)
-                    if mode in self.gt_data:
-                        gt_info = self.gt_data[mode]
-                        self.ps_viz.show_ground_truth(gt_info["type"], gt_info["params"])
+            # Calculate velocity and angular velocity magnitudes for GUI display
+            if scores_info is not None:
+                # Extract velocities, angular velocities, and weights from scores_info
+                v_arr = scores_info.get("v_arr")  # Shape (T-1, N, 3)
+                w_arr = scores_info.get("w_arr")  # Shape (T-1, N, 3)
+                w_i = scores_info.get("w_i")  # Shape (N,)
 
-                # Compute errors compared to ground truth
-                pos_err, ang_err = self._compute_error_for_mode(mode, param_dict)
+                if v_arr is not None and w_arr is not None and w_i is not None and v_arr.shape[0] > 0:
+                    # Get the latest frame
+                    latest_frame_idx = v_arr.shape[0] - 1
+
+                    # Calculate velocity and angular velocity magnitudes for each point in the latest frame
+                    v_norms = np.linalg.norm(v_arr[latest_frame_idx], axis=1)  # (N,)
+                    w_norms = np.linalg.norm(w_arr[latest_frame_idx], axis=1)  # (N,)
+
+                    # Calculate weighted averages for the latest frame using motion salience weights
+                    vel_mag = np.sum(v_norms * w_i)
+                    ang_mag = np.sum(w_norms * w_i)
+
+                    # Update GUI with velocity data
+                    if self.use_gui and self.gui:
+                        self.gui.add_velocity_data(mode, vel_mag, ang_mag)
 
                 # Update GUI with analysis results
-                if self.use_gui and self.gui:
-                    self.gui.add_velocity_data(mode, vel_mag, ang_mag)
-                if scores_info is not None:
-                    # Prepare analysis data for GUI
-                    analysis_data = {
-                        "basic_score_avg": scores_info["basic_score_avg"],
-                        "joint_probs": scores_info["joint_probs"],
-                        "position_error": pos_err,
-                        "angular_error": ang_err
-                    }
+                analysis_data = {
+                    "basic_score_avg": scores_info["basic_score_avg"],
+                    "joint_probs": scores_info["joint_probs"],
+                    "position_error": pos_err,
+                    "angular_error": ang_err
+                }
 
+                if self.use_gui and self.gui:
                     self.gui.add_analysis_results(mode, analysis_data)
-        else:
-            # First frame, zero velocity
-            self.gui.add_velocity_data(mode, 0.0, 0.0)
+            else:
+                # If no scores_info, fall back to frame-by-frame calculation
+                if fidx > 0 and current_points is not None and prev_points is not None:
+                    v_meas_3d, w_meas_3d = compute_velocity_angular_one_step_3d(
+                        prev_points, current_points, dt=0.1, num_neighbors=self.neighbor_k
+                    )
+                    vel_mag = np.linalg.norm(v_meas_3d)
+                    ang_mag = np.linalg.norm(w_meas_3d)
+
+                    # Update GUI with velocity data
+                    if self.use_gui and self.gui:
+                        self.gui.add_velocity_data(mode, vel_mag, ang_mag)
 
     def polyscope_callback(self) -> None:
         """Callback function for the Polyscope UI."""
@@ -1215,6 +1242,8 @@ class JointAnalysisApp:
         print("Registering point clouds...")
         self._register_point_clouds()
 
+        print(f"Setting current mode to: {self.current_mode}")
+        self.ps_viz.set_current_mode(self.current_mode)
         # 初始化 GUI 但不启动事件循环
         print("Starting GUI...")
         self.gui.start(width=1250, height=900)
