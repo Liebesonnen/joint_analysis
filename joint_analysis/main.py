@@ -382,20 +382,23 @@ class JointAnalysisApp:
             if data is not None and len(data) > 0:
                 self.ps_viz.register_point_cloud(name, data[0], enabled=False)
 
-    def format_error_str(pos_err_mm: float, ang_err_rad: float) -> str:
-        """格式化错误信息字符串
+    def format_error_str(self, pos_err_m: float, ang_err_rad: float) -> str:
+        """Format error information string with proper units
 
         Args:
-            pos_err_mm: 位置误差(毫米)
-            ang_err_rad: 角度误差(弧度)
+            pos_err_m: Position error in meters
+            ang_err_rad: Angular error in radians
 
         Returns:
-            str: 格式化的错误信息
+            str: Formatted error information string
         """
-        # 将角度误差转换为度
+        # Convert meter to millimeter
+        pos_err_mm = pos_err_m * 1000.0
+
+        # Convert radians to degrees
         ang_err_deg = np.degrees(ang_err_rad)
 
-        # 创建错误信息字符串
+        # Create error information string
         err_str = f"Position Error: {pos_err_mm:.2f} mm, "
         err_str += f"Angular Error: {ang_err_rad:.3f} rad ({ang_err_deg:.2f}°)"
 
@@ -446,6 +449,11 @@ class JointAnalysisApp:
 
             # Position error - for prismatic joint, use origin distance
             pos_err = 0
+            pos_err_mm = pos_err * 1000.0  # Convert to mm
+            ang_err_deg = np.degrees(angle_err)  # Convert to degrees
+            # Print errors for each mode
+            print(
+                f"{mode} - Position Error: {pos_err_mm:.2f} mm, Angular Error: {angle_err:.4f} rad ({ang_err_deg:.2f}°)")
 
             return pos_err, angle_err
 
@@ -479,6 +487,11 @@ class JointAnalysisApp:
 
             # Normalize position error (arbitrary scale)
             pos_err = line_dist / 2.0
+            pos_err_mm = pos_err * 1000.0  # Convert to mm
+            ang_err_deg = np.degrees(angle_err)  # Convert to degrees
+            # Print errors for each mode
+            print(
+                f"{mode} - Position Error: {pos_err_mm:.2f} mm, Angular Error: {angle_err:.4f} rad ({ang_err_deg:.2f}°)")
 
             return pos_err, angle_err
 
@@ -498,6 +511,11 @@ class JointAnalysisApp:
             # Position error - plane distance to origin
             # This is simplified and might not be the best metric
             pos_err = 0
+            pos_err_mm = pos_err * 1000.0  # Convert to mm
+            ang_err_deg = np.degrees(angle_err)  # Convert to degrees
+            # Print errors for each mode
+            print(
+                f"{mode} - Position Error: {pos_err_mm:.2f} mm, Angular Error: {angle_err:.4f} rad ({ang_err_deg:.2f}°)")
 
             return pos_err, angle_err
 
@@ -511,6 +529,11 @@ class JointAnalysisApp:
 
             # No meaningful angular error for ball joints
             angle_err = 0.0
+            pos_err_mm = pos_err * 1000.0  # Convert to mm
+            ang_err_deg = np.degrees(angle_err)  # Convert to degrees
+            # Print errors for each mode
+            print(
+                f"{mode} - Position Error: {pos_err_mm:.2f} mm, Angular Error: {angle_err:.4f} rad ({ang_err_deg:.2f}°)")
 
             return pos_err, angle_err
 
@@ -550,6 +573,12 @@ class JointAnalysisApp:
 
             # Combine position and pitch errors
             pos_err = (line_dist / 2.0 + pitch_err * 0.5) / 1.5
+
+            pos_err_mm = pos_err * 1000.0  # Convert to mm
+            ang_err_deg = np.degrees(angle_err)  # Convert to degrees
+            # Print errors for each mode
+            print(
+                f"{mode} - Position Error: {pos_err_mm:.2f} mm, Angular Error: {angle_err:.4f} rad ({ang_err_deg:.2f}°)")
 
             return pos_err, angle_err
 
@@ -1197,6 +1226,7 @@ class JointAnalysisApp:
             # Display joint parameters
             if self.current_best_joint in ["planar", "ball", "screw", "prismatic",
                                            "revolute"] and self.current_joint_params is not None:
+
                 if self.current_best_joint == "planar":
                     n_ = self.current_joint_params["normal"]
                     lim = self.current_joint_params["motion_limit"]
@@ -1231,6 +1261,15 @@ class JointAnalysisApp:
                     psim.TextUnformatted(f"  Axis=({a_[0]:.2f}, {a_[1]:.2f}, {a_[2]:.2f})")
                     psim.TextUnformatted(f"  Origin=({o_[0]:.2f}, {o_[1]:.2f}, {o_[2]:.2f})")
                     psim.TextUnformatted(f"  MotionLimit=({lim[0]:.2f} rad, {lim[1]:.2f} rad)")
+                if self.current_mode in self.gui.position_error_profile and len(
+                        self.gui.position_error_profile[self.current_mode]) > 0:
+                    latest_pos_err = self.gui.position_error_profile[self.current_mode][-1] * 1000.0  # Convert to mm
+                    latest_ang_err = self.gui.angular_error_profile[self.current_mode][-1]
+                    latest_ang_err_deg = np.degrees(latest_ang_err)
+
+                    # Display error metrics
+                    psim.TextUnformatted(f"  Position Error: {latest_pos_err:.2f} mm")
+                    psim.TextUnformatted(f"  Angular Error: {latest_ang_err:.4f} rad ({latest_ang_err_deg:.2f}°)")
         else:
             psim.TextUnformatted("Not enough frames to do joint classification.")
 
