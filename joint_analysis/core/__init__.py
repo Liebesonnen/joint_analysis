@@ -9,7 +9,7 @@ from .geometry import (
 from .scoring import (
     super_gaussian, normalize_vector_torch, compute_basic_scores,
     compute_joint_probability_new, compute_motion_salience_batch,
-    compute_velocity_angular_one_step_3d, compute_position_average_3d
+    compute_position_average_3d
 )
 from .joint_estimation import (
     compute_joint_info_all_types, compute_planar_info, compute_ball_info,
@@ -27,7 +27,7 @@ __all__ = [
     # Scoring
     'super_gaussian', 'normalize_vector_torch', 'compute_basic_scores',
     'compute_joint_probability_new', 'compute_motion_salience_batch',
-    'compute_velocity_angular_one_step_3d', 'compute_position_average_3d',
+    'compute_position_average_3d',
 
     # Joint estimation
     'compute_joint_info_all_types', 'compute_planar_info', 'compute_ball_info',

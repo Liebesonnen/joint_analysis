@@ -147,37 +147,6 @@ def find_neighbors_batch(pcd_batch: torch.Tensor, num_neighbor_pts: int):
     neighbor_indices = torch.topk(dist, k=num_neighbor_pts, dim=-1, largest=False).indices
     return neighbor_indices
 
-
-def compute_velocity_angular_one_step_3d(pts_prev, pts_curr, dt, num_neighbors=50):
-    """
-    对两帧 (N,3) 点云做邻域匹配 => 求出 平均 线速度3D、平均 角速度3D
-    """
-    device = pts_prev.device
-    N = pts_prev.shape[0]
-    neighbor_idx_prev = find_neighbors_batch(pts_prev.unsqueeze(0), num_neighbors)[0]  # (N,k)
-    neighbor_idx_curr = find_neighbors_batch(pts_curr.unsqueeze(0), num_neighbors)[0]  # (N,k)
-
-    src_batch = pts_prev[neighbor_idx_prev]  # (N,k,3)
-    tar_batch = pts_curr[neighbor_idx_curr]  # (N,k,3)
-    # SVD
-    R_2d = estimate_rotation_matrix_batch(src_batch, tar_batch)
-    c1_2d = src_batch.mean(dim=1)
-    c2_2d = tar_batch.mean(dim=1)
-    delta_p_2d = c2_2d - c1_2d
-
-    eye_4 = torch.eye(4, device=device).unsqueeze(0).expand(N, -1, -1).clone()
-    eye_4[:, :3, :3] = R_2d
-    eye_4[:, :3, 3] = delta_p_2d
-    se3_logs = se3_log_map_batch(eye_4)  # (N,6)
-    # 前3维是平移向量, 后3维是旋转向量
-    trans_local = se3_logs[:, :3] / dt  # (N,3)
-    rot_local = se3_logs[:, 3:] / dt    # (N,3)
-
-    # 对N个点取平均
-    v_mean = trans_local.mean(dim=0)  # (3,)
-    w_mean = rot_local.mean(dim=0)    # (3,)
-    return v_mean.cpu().numpy(), w_mean.cpu().numpy()
-
 def compute_position_average_3d(pts):
     """
     Compute the average 3D position of points.

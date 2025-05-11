@@ -16,7 +16,7 @@ from .synthetic.data_generator import SyntheticJointGenerator
 from .data.data_loader import load_numpy_sequence, load_pytorch_data, load_real_datasets
 from typing import Dict, List, Optional, Callable, Any, Union, Tuple
 from .core.geometry import rotate_points_y, rotate_points, translate_points, apply_screw_motion, rotate_points_xyz
-from .core.scoring import compute_velocity_angular_one_step_3d, compute_position_average_3d
+from .core.scoring import  compute_position_average_3d
 import os
 from .viz.plot_saver import PlotSaver
 import torch
@@ -1006,18 +1006,6 @@ class JointAnalysisApp:
 
                 if self.use_gui and self.gui:
                     self.gui.add_analysis_results(mode, analysis_data)
-            else:
-                # If no scores_info, fall back to frame-by-frame calculation
-                if fidx > 0 and current_points is not None and prev_points is not None:
-                    v_meas_3d, w_meas_3d = compute_velocity_angular_one_step_3d(
-                        prev_points, current_points, dt=0.1, num_neighbors=self.neighbor_k
-                    )
-                    vel_mag = np.linalg.norm(v_meas_3d)
-                    ang_mag = np.linalg.norm(w_meas_3d)
-
-                    # Update GUI with velocity data
-                    if self.use_gui and self.gui:
-                        self.gui.add_velocity_data(mode, vel_mag, ang_mag)
 
     def polyscope_callback(self) -> None:
         """Callback function for the Polyscope UI."""

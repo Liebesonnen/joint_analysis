@@ -3,9 +3,6 @@ from scipy.linalg import expm, logm, norm
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import os
-
-# Import our functions (assuming they're in a module named so3_functions)
-# In practice, you would save the first code block to so3_functions.py
 from so3_functions import (hat, vee, expSO3, dexpSO3, DdexpSO3,
                            sgolayfiltSO3, tight_subplot)
 

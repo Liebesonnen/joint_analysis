@@ -5,6 +5,7 @@ import math
 import numpy as np
 import torch
 from scipy.signal import savgol_filter
+from sg_filter.so3_functions import sgolayfiltSO3
 from .scoring import (
     normalize_vector_torch, find_neighbors_batch, compute_basic_scores,
     compute_joint_probability_new, compute_motion_salience_batch, se3_log_map_batch,
@@ -21,127 +22,174 @@ prismatic_axis_reference = None
 revolute_axis_reference = None
 
 
-def multi_frame_rigid_fit(all_points_history: torch.Tensor, center_idx: int, window_radius: int):
-    """
-    Multi-frame rigid fit around [center_idx-window_radius, center_idx+window_radius].
-    Returns a 4x4 transform from the center frame to best fit.
-    """
-    T, N, _ = all_points_history.shape
-    device = all_points_history.device
-    i_min = max(0, center_idx - window_radius)
-    i_max = min(T - 1, center_idx + window_radius)
-
-    ref_pts = all_points_history[center_idx]
-    src_list = []
-    tgt_list = []
-    for idx in range(i_min, i_max + 1):
-        if idx == center_idx:
-            continue
-        cur_pts = all_points_history[idx]
-        src_list.append(ref_pts)
-        tgt_list.append(cur_pts)
-    if not src_list:
-        return torch.eye(4, device=device)
-    src_big = torch.cat(src_list, dim=0)
-    tgt_big = torch.cat(tgt_list, dim=0)
-
-    src_mean = src_big.mean(dim=0)
-    tgt_mean = tgt_big.mean(dim=0)
-    src_centered = src_big - src_mean
-    tgt_centered = tgt_big - tgt_mean
-
-    H = torch.einsum('ni,nj->ij', src_centered, tgt_centered)
-    U, S, Vt = torch.linalg.svd(H)
-    R_ = Vt.T @ U.T
-    if torch.det(R_) < 0:
-        Vt[-1, :] *= -1
-        R_ = Vt.T @ U.T
-    t_ = tgt_mean - R_ @ src_mean
-    Tmat = torch.eye(4, device=device)
-    Tmat[:3, :3] = R_
-    Tmat[:3, 3] = t_
-    return Tmat
-
-
 def calculate_velocity_and_angular_velocity_for_all_frames(
         all_points_history,
         dt=0.1,
-        num_neighbors=400,
+        num_neighbors=10,
         use_savgol=True,
         savgol_window=5,
         savgol_poly=2,
         use_multi_frame=False,
         window_radius=2,
-        # Added outlier handling parameters
-        v_max_threshold=10.0,  # Maximum allowed linear velocity (m/s)
-        w_max_threshold=30.0,  # Maximum allowed angular velocity (rad/s)
-        use_percentile=False,  # Use percentile-based outlier detection
-        outlier_percentile=95  # Percentile threshold for outliers
+        v_max_threshold=10.0,
+        w_max_threshold=30.0,
+        use_percentile=False,
+        outlier_percentile=95,
+        use_so3_filter=False  # New parameter to control SO(3) filtering
 ):
     """
-    Compute linear and angular velocity for (T,N,3).
+    Compute linear and angular velocity for (T,N,3) using improved filtering methods.
     Returns v_arr, w_arr => (T-1, N, 3).
-
-    Args:
-        all_points_history: Point history of shape (T,N,3)
-        dt: Time step
-        num_neighbors: Number of neighbors for local estimation
-        use_savgol: Whether to apply Savitzky-Golay filtering
-        savgol_window: Window size for Savitzky-Golay filter
-        savgol_poly: Polynomial order for Savitzky-Golay filter
-        use_multi_frame: Whether to use multi-frame rigid fitting
-        window_radius: Radius for multi-frame fitting
-        v_max_threshold: Maximum allowed linear velocity (m/s)
-        w_max_threshold: Maximum allowed angular velocity (rad/s)
-        use_percentile: Use percentile-based outlier detection instead of fixed thresholds
-        outlier_percentile: Percentile threshold for outliers (only used if use_percentile is True)
-
-    Returns:
-        tuple: (v_arr, w_arr) linear and angular velocities of shape (T-1, N, 3)
     """
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     if not isinstance(all_points_history, torch.Tensor):
         all_points_history = torch.tensor(all_points_history, dtype=torch.float32, device=device)
+
     T, N, _ = all_points_history.shape
     if T < 2:
         return None, None
 
-    if use_multi_frame:
-        # Multi-frame rigid fit
-        v_list = []
-        w_list = []
-        for t in range(T - 1):
-            center_idx = t + 1
-            Tmat = multi_frame_rigid_fit(all_points_history, center_idx, window_radius)
-            Tmat_batch = Tmat.unsqueeze(0)
-            se3_logs = se3_log_map_batch(Tmat_batch)
-            se3_v = se3_logs[0, :3] / dt
-            se3_w = se3_logs[0, 3:] / dt
-            v_list.append(se3_v.unsqueeze(0).repeat(all_points_history.shape[1], 1))
-            w_list.append(se3_w.unsqueeze(0).repeat(all_points_history.shape[1], 1))
-        v_arr = torch.stack(v_list, dim=0).cpu().numpy()
-        w_arr = torch.stack(w_list, dim=0).cpu().numpy()
-    else:
-        # Neighbor-based estimation
-        pts_prev = all_points_history[:-1]
-        pts_curr = all_points_history[1:]
-        B = T - 1
-        neighbor_idx_prev = find_neighbors_batch(pts_prev, num_neighbors)
-        neighbor_idx_curr = find_neighbors_batch(pts_curr, num_neighbors)
-        K = num_neighbors
+    # Step 1: Apply SG filtering to position data first
+    filtered_points = all_points_history.clone().cpu().numpy()
 
-        src_batch = pts_prev[
-                    torch.arange(B, device=device).view(B, 1, 1),
-                    neighbor_idx_prev,
-                    :
-                    ]
-        tar_batch = pts_curr[
-                    torch.arange(B, device=device).view(B, 1, 1),
-                    neighbor_idx_curr,
-                    :
-                    ]
-        src_2d = src_batch.reshape(B * N, K, 3)
-        tar_2d = tar_batch.reshape(B * N, K, 3)
+    if use_savgol and (T >= savgol_window):
+        # Filter each point's trajectory individually
+        for n in range(N):
+            for dim in range(3):
+                filtered_points[:, n, dim] = savgol_filter(
+                    filtered_points[:, n, dim],
+                    window_length=savgol_window,
+                    polyorder=savgol_poly
+                )
+
+    # Step 2: Calculate linear velocities using SG derivatives directly
+    v_arr = np.zeros((T - 1, N, 3))
+
+    if use_savgol and (T >= savgol_window):
+        # Calculate derivatives directly using SG filter
+        point_velocities = np.zeros((T, N, 3))
+        for n in range(N):
+            for dim in range(3):
+                # Use deriv=1 to get first derivative
+                point_velocities[:, n, dim] = savgol_filter(
+                    all_points_history[:, n, dim].cpu().numpy(),
+                    window_length=savgol_window,
+                    polyorder=savgol_poly,
+                    deriv=1,
+                    delta=dt
+                )
+
+        # Use the velocities for frames 0 to T-2
+        v_arr = point_velocities[:-1]
+    else:
+        # Fall back to finite differences if not using SG
+        for t in range(T - 1):
+            v_arr[t] = (filtered_points[t + 1] - filtered_points[t]) / dt
+
+    # Convert back to tensor for further processing
+    filtered_points_tensor = torch.tensor(filtered_points, dtype=torch.float32, device=device)
+
+    # Step 3-6: Angular velocity calculation using SO(3) filtering
+    if use_so3_filter and T > 2:
+        try:
+            # We'll compute a global rotation for the entire point cloud
+            rotation_matrices = np.zeros((3, 3, T))
+            rotation_matrices[:, :, 0] = np.eye(3)  # First frame is identity
+
+            for t in range(1, T):
+                # Get reference (first) frame and current frame points
+                ref_points = filtered_points_tensor[0]  # First frame as reference
+                cur_points = filtered_points_tensor[t]
+
+                # Center the point clouds
+                ref_center = torch.mean(ref_points, dim=0)
+                cur_center = torch.mean(cur_points, dim=0)
+                ref_centered = ref_points - ref_center
+                cur_centered = cur_points - cur_center
+
+                # Estimate rotation matrix using batch SVD
+                R = estimate_rotation_matrix_batch(
+                    ref_centered.unsqueeze(0),
+                    cur_centered.unsqueeze(0)
+                )[0]
+
+                rotation_matrices[:, :, t] = R.cpu().numpy()
+
+            # Extract rotation angles from rotation matrices
+            rotation_angles = np.zeros((3, T))
+            for t in range(T):
+                R = rotation_matrices[:, :, t]
+
+                # Compute the angle using the trace
+                theta = np.arccos(np.clip((np.trace(R) - 1) / 2, -1.0, 1.0))
+
+                if np.abs(theta) < 1e-10:
+                    # Identity rotation
+                    rotation_angles[:, t] = np.zeros(3)
+                else:
+                    # Extract rotation vector using the skew-symmetric part
+                    K = (R - R.T) / (2 * np.sin(theta)) if np.abs(theta) > 1e-10 else np.zeros((3, 3))
+                    rotation_angles[0, t] = K[2, 1] * theta
+                    rotation_angles[1, t] = K[0, 2] * theta
+                    rotation_angles[2, t] = K[1, 0] * theta
+
+            # Filter the rotation angles with SG filter
+            filtered_angles = np.zeros_like(rotation_angles)
+            for dim in range(3):
+                if T >= savgol_window:
+                    filtered_angles[dim, :] = savgol_filter(
+                        rotation_angles[dim, :],
+                        window_length=savgol_window,
+                        polyorder=savgol_poly,
+                        mode='mirror'
+                    )
+                else:
+                    filtered_angles[dim, :] = rotation_angles[dim, :]
+
+            # Calculate angular velocity directly using SG derivative
+            angular_velocities = np.zeros((T, 3))
+            for dim in range(3):
+                if T >= savgol_window:
+                    # Key change: Use deriv=1 to get first derivative directly
+                    angular_velocities[:, dim] = savgol_filter(
+                        rotation_angles[dim, :],
+                        window_length=savgol_window,
+                        polyorder=savgol_poly,
+                        deriv=1,
+                        delta=dt,  # Time step for proper scaling
+                        mode='mirror'
+                    )
+                else:
+                    # Fallback to finite differences
+                    padded_angles = np.pad(rotation_angles[dim, :], 1, mode='edge')
+                    angular_velocities[:, dim] = np.diff(padded_angles)[:-1] / dt
+
+            # Copy to output array and broadcast to all points
+            w_arr = np.zeros((T - 1, N, 3))
+            for t in range(T - 1):
+                w_arr[t, :, :] = np.tile(angular_velocities[t, :], (N, 1))
+
+        except Exception as e:
+            print(f"SO(3) filtering failed with error: {e}. Falling back to standard method.")
+            use_so3_filter = False
+
+    # Fallback to original method if SO(3) filtering is disabled or failed
+    if not use_so3_filter:
+        # Original neighborhood-based method for angular velocity
+        pts_prev = filtered_points_tensor[:-1]
+        pts_curr = filtered_points_tensor[1:]
+        B = T - 1
+
+        # Use a safe number of neighbors
+        safe_neighbors = min(num_neighbors, N)
+
+        neighbor_idx_prev = find_neighbors_batch(pts_prev, safe_neighbors)
+        neighbor_idx_curr = find_neighbors_batch(pts_curr, safe_neighbors)
+
+        src_batch = pts_prev[torch.arange(B, device=device).view(B, 1, 1), neighbor_idx_prev, :]
+        tar_batch = pts_curr[torch.arange(B, device=device).view(B, 1, 1), neighbor_idx_curr, :]
+        src_2d = src_batch.reshape(B * N, safe_neighbors, 3)
+        tar_2d = tar_batch.reshape(B * N, safe_neighbors, 3)
 
         R_2d = estimate_rotation_matrix_batch(src_2d, tar_2d)
         c1_2d = src_2d.mean(dim=1)
@@ -153,73 +201,361 @@ def calculate_velocity_and_angular_velocity_for_all_frames(
         eye_4[:, :3, 3] = delta_p_2d
         transform_matrices_2d = eye_4
         se3_logs_2d = se3_log_map_batch(transform_matrices_2d)
-        v_2d = se3_logs_2d[:, :3] / dt
         w_2d = se3_logs_2d[:, 3:] / dt
-
-        v_arr = v_2d.reshape(B, N, 3).cpu().numpy()
         w_arr = w_2d.reshape(B, N, 3).cpu().numpy()
 
-    # Convert to numpy arrays for further processing
-    v_arr = np.asarray(v_arr)
-    w_arr = np.asarray(w_arr)
+    # Apply outlier handling
+    v_magnitudes = np.linalg.norm(v_arr, axis=2)
+    w_magnitudes = np.linalg.norm(w_arr, axis=2)
+    B = T - 1
 
-    # Outlier handling for both linear and angular velocities
-    # Compute velocity magnitudes
-    v_magnitudes = np.linalg.norm(v_arr, axis=2)  # (B, N)
-    w_magnitudes = np.linalg.norm(w_arr, axis=2)  # (B, N)
-
-    # Determine thresholds for outliers
-    if use_percentile and B * N > 10:  # Only use percentile if enough data points
+    # Apply thresholds
+    if use_percentile and B * N > 10:
         v_threshold = np.percentile(v_magnitudes, outlier_percentile)
         w_threshold = np.percentile(w_magnitudes, outlier_percentile)
-
-        # Cap the thresholds to reasonable values
         v_threshold = min(v_threshold, v_max_threshold)
         w_threshold = min(w_threshold, w_max_threshold)
     else:
         v_threshold = v_max_threshold
         w_threshold = w_max_threshold
 
-    # Create masks for outliers
-    v_outlier_mask = v_magnitudes > v_threshold  # (B, N)
-    w_outlier_mask = w_magnitudes > w_threshold  # (B, N)
+    # Handle outliers
+    v_outlier_mask = v_magnitudes > v_threshold
+    w_outlier_mask = w_magnitudes > w_threshold
 
-    # Handle outliers in linear velocity
     for b in range(B):
         for n in range(N):
             if v_outlier_mask[b, n]:
-                # Set outlier velocities to zero or a reasonable value
-                # Option 1: Set to zero
                 v_arr[b, n, :] = 0.0
-
-                # Option 2: Scale down to the threshold
-                # scale_factor = v_threshold / v_magnitudes[b, n]
-                # v_arr[b, n, :] *= scale_factor
-
-    # Handle outliers in angular velocity
-    for b in range(B):
-        for n in range(N):
             if w_outlier_mask[b, n]:
-                # Set outlier angular velocities to zero or a reasonable value
-                # Option 1: Set to zero
                 w_arr[b, n, :] = 0.0
 
-                # Option 2: Scale down to the threshold
-                # scale_factor = w_threshold / w_magnitudes[b, n]
-                # w_arr[b, n, :] *= scale_factor
-
-    # Apply Savitzky-Golay filter if requested
-    if use_savgol and (T - 1) >= savgol_window:
-        v_arr = savgol_filter(
-            v_arr, window_length=savgol_window, polyorder=savgol_poly,
-            axis=0, mode='mirror'
-        )
-        w_arr = savgol_filter(
-            w_arr, window_length=savgol_window, polyorder=savgol_poly,
-            axis=0, mode='mirror'
-        )
-
     return v_arr, w_arr
+
+# def calculate_velocity_and_angular_velocity_for_all_frames(
+#         all_points_history,
+#         dt=0.1,
+#         num_neighbors=10,
+#         use_savgol=True,
+#         savgol_window=5,
+#         savgol_poly=2,
+#         use_multi_frame=False,
+#         window_radius=2,
+#         v_max_threshold=10.0,
+#         w_max_threshold=30.0,
+#         use_percentile=False,
+#         outlier_percentile=95,
+#         use_so3_filter=False  # New parameter to control SO(3) filtering
+# ):
+#     """
+#     Compute linear and angular velocity for (T,N,3) using improved filtering methods.
+#     Returns v_arr, w_arr => (T-1, N, 3).
+#     """
+#     from scipy.signal import savgol_filter
+#
+#     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+#     if not isinstance(all_points_history, torch.Tensor):
+#         all_points_history = torch.tensor(all_points_history, dtype=torch.float32, device=device)
+#
+#     T, N, _ = all_points_history.shape
+#     if T < 2:
+#         return None, None
+#
+#     # Step 1: Apply SG filtering to position data first
+#     filtered_points = all_points_history.clone().cpu().numpy()
+#
+#     if use_savgol and (T >= savgol_window):
+#         # Filter each point's trajectory individually
+#         for n in range(N):
+#             for dim in range(3):
+#                 filtered_points[:, n, dim] = savgol_filter(
+#                     filtered_points[:, n, dim],
+#                     window_length=savgol_window,
+#                     polyorder=savgol_poly,
+#                     mode='mirror'
+#                 )
+#
+#     # Convert back to tensor for further processing
+#     filtered_points_tensor = torch.tensor(filtered_points, dtype=torch.float32, device=device)
+#
+#     # Step 2: Calculate linear velocities by differentiating filtered positions
+#     v_arr = np.zeros((T - 1, N, 3))
+#     for t in range(T - 1):
+#         v_arr[t] = (filtered_points[t + 1] - filtered_points[t]) / dt
+#
+#     # Step 3-6: Angular velocity calculation using SO(3) filtering
+#     if use_so3_filter:
+#         # Compute rotation matrices relative to first frame
+#         rotation_matrices = np.zeros((3, 3, T))
+#         rotation_matrices[:, :, 0] = np.eye(3)  # First frame is identity
+#
+#         # Compute rotation from first frame to each subsequent frame
+#         for t in range(1, T):
+#             # Get reference (first) frame and current frame points
+#             ref_points = filtered_points_tensor[0]  # First frame as reference
+#             cur_points = filtered_points_tensor[t]
+#
+#             # For each point, find its neighborhood in both frames
+#             point_rotations = []
+#             for i in range(N):
+#                 # Find neighbors for this point
+#                 neighbor_idx = find_neighbors_batch(ref_points[i:i + 1].unsqueeze(0),
+#                                                     num_neighbors)[0][0]
+#
+#                 # Get same neighborhoods in both frames
+#                 ref_neighborhood = ref_points[neighbor_idx]
+#                 cur_neighborhood = cur_points[neighbor_idx]
+#
+#                 # Center the neighborhoods
+#                 ref_center = torch.mean(ref_neighborhood, dim=0, keepdim=True)
+#                 cur_center = torch.mean(cur_neighborhood, dim=0, keepdim=True)
+#                 ref_centered = ref_neighborhood - ref_center
+#                 cur_centered = cur_neighborhood - cur_center
+#
+#                 # Estimate rotation matrix using batch SVD
+#                 R = estimate_rotation_matrix_batch(ref_centered.unsqueeze(0),
+#                                                    cur_centered.unsqueeze(0))[0]
+#                 point_rotations.append(R.cpu().numpy())
+#
+#             # Combine rotations from all points (with weighting based on motion salience)
+#             avg_rotation = np.mean(np.array(point_rotations), axis=0)
+#
+#             # Ensure it's a valid rotation matrix
+#             U, _, Vh = np.linalg.svd(avg_rotation)
+#             rotation_matrices[:, :, t] = U @ Vh
+#
+#         # Apply SO(3) Savitzky-Golay filter
+#         n = min(10, (T - 1) // 4)  # Half window size - adjust as needed
+#         p = min(3, 2 * n - 1)  # Polynomial order - should be less than window size
+#
+#         # Apply SO(3) filter from the sg_filter package
+#         R_filtered, w_filtered, _, tf = sgolayfiltSO3(
+#             rotation_matrices,
+#             p=p,
+#             n=n,
+#             freq=int(1 / dt)
+#         )
+#
+#         # Create output angular velocity array
+#         w_arr = np.zeros((T - 1, N, 3))
+#
+#         # The filtered data will be shorter - handle edge cases
+#         filtered_length = w_filtered.shape[1]
+#         start_idx = n
+#         end_idx = start_idx + filtered_length
+#
+#         # Copy filtered angular velocities to all points
+#         for t_idx in range(filtered_length):
+#             t = t_idx + start_idx
+#             if t < T - 1:
+#                 w_arr[t] = np.tile(w_filtered[:, t_idx], (N, 1))
+#
+#         # Fill start and end regions that couldn't be filtered
+#         for t in range(min(start_idx, T - 1)):
+#             if start_idx < T - 1:
+#                 w_arr[t] = w_arr[start_idx]
+#
+#         for t in range(min(end_idx, T - 1), T - 1):
+#             if end_idx > 0 and end_idx - 1 < T - 1:
+#                 w_arr[t] = w_arr[end_idx - 1]
+#     else:
+#         # Fallback to original neighborhood-based method for angular velocity
+#         pts_prev = filtered_points_tensor[:-1]
+#         pts_curr = filtered_points_tensor[1:]
+#         B = T - 1
+#         neighbor_idx_prev = find_neighbors_batch(pts_prev, num_neighbors)
+#         neighbor_idx_curr = find_neighbors_batch(pts_curr, num_neighbors)
+#         K = num_neighbors
+#
+#         src_batch = pts_prev[torch.arange(B, device=device).view(B, 1, 1), neighbor_idx_prev, :]
+#         tar_batch = pts_curr[torch.arange(B, device=device).view(B, 1, 1), neighbor_idx_curr, :]
+#         src_2d = src_batch.reshape(B * N, K, 3)
+#         tar_2d = tar_batch.reshape(B * N, K, 3)
+#
+#         R_2d = estimate_rotation_matrix_batch(src_2d, tar_2d)
+#         c1_2d = src_2d.mean(dim=1)
+#         c2_2d = tar_2d.mean(dim=1)
+#         delta_p_2d = c2_2d - c1_2d
+#
+#         eye_4 = torch.eye(4, device=device).unsqueeze(0).expand(B * N, -1, -1).clone()
+#         eye_4[:, :3, :3] = R_2d
+#         eye_4[:, :3, 3] = delta_p_2d
+#         transform_matrices_2d = eye_4
+#         se3_logs_2d = se3_log_map_batch(transform_matrices_2d)
+#         w_2d = se3_logs_2d[:, 3:] / dt
+#         w_arr = w_2d.reshape(B, N, 3).cpu().numpy()
+#
+#     # Apply outlier handling as in original code
+#     v_magnitudes = np.linalg.norm(v_arr, axis=2)
+#     w_magnitudes = np.linalg.norm(w_arr, axis=2)
+#     B = T - 1
+#
+#     # Apply thresholds
+#     if use_percentile and B * N > 10:
+#         v_threshold = np.percentile(v_magnitudes, outlier_percentile)
+#         w_threshold = np.percentile(w_magnitudes, outlier_percentile)
+#         v_threshold = min(v_threshold, v_max_threshold)
+#         w_threshold = min(w_threshold, w_max_threshold)
+#     else:
+#         v_threshold = v_max_threshold
+#         w_threshold = w_max_threshold
+#
+#     # Handle outliers
+#     v_outlier_mask = v_magnitudes > v_threshold
+#     w_outlier_mask = w_magnitudes > w_threshold
+#
+#     for b in range(B):
+#         for n in range(N):
+#             if v_outlier_mask[b, n]:
+#                 v_arr[b, n, :] = 0.0
+#             if w_outlier_mask[b, n]:
+#                 w_arr[b, n, :] = 0.0
+#
+#     return v_arr, w_arr
+
+# def calculate_velocity_and_angular_velocity_for_all_frames(
+#         all_points_history,
+#         dt=0.1,
+#         num_neighbors=400,
+#         use_savgol=True,
+#         savgol_window=5,
+#         savgol_poly=2,
+#         use_multi_frame=False,
+#         window_radius=2,
+#         # Added outlier handling parameters
+#         v_max_threshold=10.0,  # Maximum allowed linear velocity (m/s)
+#         w_max_threshold=30.0,  # Maximum allowed angular velocity (rad/s)
+#         use_percentile=False,  # Use percentile-based outlier detection
+#         outlier_percentile=95  # Percentile threshold for outliers
+# ):
+#     """
+#     Compute linear and angular velocity for (T,N,3).
+#     Returns v_arr, w_arr => (T-1, N, 3).
+#
+#     Args:
+#         all_points_history: Point history of shape (T,N,3)
+#         dt: Time step
+#         num_neighbors: Number of neighbors for local estimation
+#         use_savgol: Whether to apply Savitzky-Golay filtering
+#         savgol_window: Window size for Savitzky-Golay filter
+#         savgol_poly: Polynomial order for Savitzky-Golay filter
+#         use_multi_frame: Whether to use multi-frame rigid fitting
+#         window_radius: Radius for multi-frame fitting
+#         v_max_threshold: Maximum allowed linear velocity (m/s)
+#         w_max_threshold: Maximum allowed angular velocity (rad/s)
+#         use_percentile: Use percentile-based outlier detection instead of fixed thresholds
+#         outlier_percentile: Percentile threshold for outliers (only used if use_percentile is True)
+#
+#     Returns:
+#         tuple: (v_arr, w_arr) linear and angular velocities of shape (T-1, N, 3)
+#     """
+#     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+#     if not isinstance(all_points_history, torch.Tensor):
+#         all_points_history = torch.tensor(all_points_history, dtype=torch.float32, device=device)
+#     T, N, _ = all_points_history.shape
+#     if T < 2:
+#         return None, None
+#
+#
+#     # Neighbor-based estimation
+#     pts_prev = all_points_history[:-1]
+#     pts_curr = all_points_history[1:]
+#     B = T - 1
+#     neighbor_idx_prev = find_neighbors_batch(pts_prev, num_neighbors)
+#     neighbor_idx_curr = find_neighbors_batch(pts_curr, num_neighbors)
+#     K = num_neighbors
+#
+#     src_batch = pts_prev[
+#                 torch.arange(B, device=device).view(B, 1, 1),
+#                 neighbor_idx_prev,
+#                 :
+#                 ]
+#     tar_batch = pts_curr[
+#                 torch.arange(B, device=device).view(B, 1, 1),
+#                 neighbor_idx_curr,
+#                 :
+#                 ]
+#     src_2d = src_batch.reshape(B * N, K, 3)
+#     tar_2d = tar_batch.reshape(B * N, K, 3)
+#
+#     R_2d = estimate_rotation_matrix_batch(src_2d, tar_2d)
+#     c1_2d = src_2d.mean(dim=1)
+#     c2_2d = tar_2d.mean(dim=1)
+#     delta_p_2d = c2_2d - c1_2d
+#
+#     eye_4 = torch.eye(4, device=device).unsqueeze(0).expand(B * N, -1, -1).clone()
+#     eye_4[:, :3, :3] = R_2d
+#     eye_4[:, :3, 3] = delta_p_2d
+#     transform_matrices_2d = eye_4
+#     se3_logs_2d = se3_log_map_batch(transform_matrices_2d)
+#     v_2d = se3_logs_2d[:, :3] / dt
+#     w_2d = se3_logs_2d[:, 3:] / dt
+#
+#     v_arr = v_2d.reshape(B, N, 3).cpu().numpy()
+#     w_arr = w_2d.reshape(B, N, 3).cpu().numpy()
+#
+#     # Convert to numpy arrays for further processing
+#     v_arr = np.asarray(v_arr)
+#     w_arr = np.asarray(w_arr)
+#
+#     # Outlier handling for both linear and angular velocities
+#     # Compute velocity magnitudes
+#     v_magnitudes = np.linalg.norm(v_arr, axis=2)  # (B, N)
+#     w_magnitudes = np.linalg.norm(w_arr, axis=2)  # (B, N)
+#
+#     # Determine thresholds for outliers
+#     if use_percentile and B * N > 10:  # Only use percentile if enough data points
+#         v_threshold = np.percentile(v_magnitudes, outlier_percentile)
+#         w_threshold = np.percentile(w_magnitudes, outlier_percentile)
+#
+#         # Cap the thresholds to reasonable values
+#         v_threshold = min(v_threshold, v_max_threshold)
+#         w_threshold = min(w_threshold, w_max_threshold)
+#     else:
+#         v_threshold = v_max_threshold
+#         w_threshold = w_max_threshold
+#
+#     # Create masks for outliers
+#     v_outlier_mask = v_magnitudes > v_threshold  # (B, N)
+#     w_outlier_mask = w_magnitudes > w_threshold  # (B, N)
+#
+#     # Handle outliers in linear velocity
+#     for b in range(B):
+#         for n in range(N):
+#             if v_outlier_mask[b, n]:
+#                 # Set outlier velocities to zero or a reasonable value
+#                 # Option 1: Set to zero
+#                 v_arr[b, n, :] = 0.0
+#
+#                 # Option 2: Scale down to the threshold
+#                 # scale_factor = v_threshold / v_magnitudes[b, n]
+#                 # v_arr[b, n, :] *= scale_factor
+#
+#     # Handle outliers in angular velocity
+#     for b in range(B):
+#         for n in range(N):
+#             if w_outlier_mask[b, n]:
+#                 # Set outlier angular velocities to zero or a reasonable value
+#                 # Option 1: Set to zero
+#                 w_arr[b, n, :] = 0.0
+#
+#                 # Option 2: Scale down to the threshold
+#                 # scale_factor = w_threshold / w_magnitudes[b, n]
+#                 # w_arr[b, n, :] *= scale_factor
+#
+#     # Apply Savitzky-Golay filter if requested
+#     if use_savgol and (T - 1) >= savgol_window:
+#         v_arr = savgol_filter(
+#             v_arr, window_length=savgol_window, polyorder=savgol_poly,
+#             axis=0, mode='mirror'
+#         )
+#         w_arr = savgol_filter(
+#             w_arr, window_length=savgol_window, polyorder=savgol_poly,
+#             axis=0, mode='mirror'
+#         )
+#
+#     return v_arr, w_arr
+
 # def calculate_velocity_and_angular_velocity_for_all_frames(
 #     all_points_history,
 #     dt=0.1,
@@ -1857,9 +2193,7 @@ def compute_joint_info_all_types(
         num_neighbors=neighbor_k,
         use_savgol=use_savgol,
         savgol_window=savgol_window,
-        savgol_poly=savgol_poly,
-        use_multi_frame=use_multi_frame,
-        window_radius=multi_frame_window_radius
+        savgol_poly=savgol_poly
     )
 
     if v_arr is None or w_arr is None:
