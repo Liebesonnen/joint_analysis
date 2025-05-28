@@ -498,9 +498,9 @@ class Viz:
         # Initialize current point index and change flag
         self.idx_point, self.idx_point_changed = 0, False
         # Load revolute joint point cloud data
-        self.d = np.load("./demo_data/screw.npy")
+        self.d = np.load("./demo_data/s1_refrigerator_part2_3180_3240.npy")
         # Add random noise
-        self.d += np.random.randn(*self.d.shape) * 0.01
+        # self.d += np.random.randn(*self.d.shape) * 0.01
         # Print data shape for debugging
         ic(self.d.shape)
         # Get data dimensions: number of time frames, points per frame, and coordinate dimensions
@@ -683,7 +683,7 @@ class Viz:
         ax1.set_title(f"Position Trajectory of Point #{self.idx_point}")
         ax1.set_xlabel("Time (s)")
         ax1.set_ylabel("Position (m)")
-        ax1.set_xlim(0, 20)
+        ax1.set_xlim(0, 7)
         ax1.set_ylim(-1, 10)
         ax1.grid(True, linestyle='--', alpha=0.7)
         ax1.legend(loc='upper right')
@@ -697,7 +697,7 @@ class Viz:
         ax2.set_title(f"Linear Velocity of Point #{self.idx_point}")
         ax2.set_xlabel("Time (s)")
         ax2.set_ylabel("Velocity (m/s)")
-        ax2.set_xlim(0, 20)
+        ax2.set_xlim(0, 7)
         ax2.set_ylim(-1, 1)
         ax2.grid(True, linestyle='--', alpha=0.7)
         ax2.legend(loc='upper right')
@@ -709,8 +709,8 @@ class Viz:
         ax3.set_title(f"Angular Velocity X Component of Point #{self.idx_point}")
         ax3.set_xlabel("Time (s)")
         ax3.set_ylabel("Angular Velocity (rad/s)")
-        ax3.set_xlim(0, 20)
-        ax3.set_ylim(-0.25, 0.25)
+        ax3.set_xlim(0, 7)
+        ax3.set_ylim(-1, 1)
         ax3.grid(True, linestyle='--', alpha=0.7)
         ax3.legend(loc='upper right')
 
@@ -722,7 +722,7 @@ class Viz:
         ax4.set_title(f"Angular Velocity Y Component of Point #{self.idx_point}")
         ax4.set_xlabel("Time (s)")
         ax4.set_ylabel("Angular Velocity (rad/s)")
-        ax4.set_xlim(0, 20)
+        ax4.set_xlim(0, 7)
         ax4.set_ylim(-1, 1)
         ax4.grid(True, linestyle='--', alpha=0.7)
         ax4.legend(loc='upper right')
@@ -736,8 +736,8 @@ class Viz:
         ax5.set_title(f"Angular Velocity Z Component of Point #{self.idx_point}")
         ax5.set_xlabel("Time (s)")
         ax5.set_ylabel("Angular Velocity (rad/s)")
-        ax5.set_xlim(0, 20)
-        ax5.set_ylim(-0.25, 0.25)
+        ax5.set_xlim(0, 7)
+        ax5.set_ylim(-1, 1)
         ax5.grid(True, linestyle='--', alpha=0.7)
         ax5.legend(loc='upper right')
 
@@ -779,7 +779,7 @@ class Viz:
         ax1.set_title(f"Position Trajectory of Point #{self.idx_point}")
         ax1.set_xlabel("Time (s)")
         ax1.set_ylabel("Position (m)")
-        ax1.set_xlim(0, 20)
+        ax1.set_xlim(0, 7)
         ax1.set_ylim(-1, 10)
         ax1.grid(True, linestyle='--', alpha=0.7)
         ax1.legend(loc='upper right')
@@ -793,7 +793,7 @@ class Viz:
         ax2.set_title(f"Linear Velocity of Point #{self.idx_point}")
         ax2.set_xlabel("Time (s)")
         ax2.set_ylabel("Velocity (m/s)")
-        ax2.set_xlim(0, 20)
+        ax2.set_xlim(0, 7)
         ax2.set_ylim(-1, 1)
         ax2.grid(True, linestyle='--', alpha=0.7)
         ax2.legend(loc='upper right')
@@ -805,8 +805,8 @@ class Viz:
         ax3.set_title(f"Angular Velocity X Component of Point #{self.idx_point}")
         ax3.set_xlabel("Time (s)")
         ax3.set_ylabel("Angular Velocity (rad/s)")
-        ax3.set_xlim(0, 20)
-        ax3.set_ylim(-0.25, 0.25)
+        ax3.set_xlim(0, 7)
+        ax3.set_ylim(-1, 1)
         ax3.grid(True, linestyle='--', alpha=0.7)
         ax3.legend(loc='upper right')
 
@@ -818,7 +818,7 @@ class Viz:
         ax4.set_title(f"Angular Velocity Y Component of Point #{self.idx_point}")
         ax4.set_xlabel("Time (s)")
         ax4.set_ylabel("Angular Velocity (rad/s)")
-        ax4.set_xlim(0, 20)
+        ax4.set_xlim(0, 7)
         ax4.set_ylim(-1, 1)
         ax4.grid(True, linestyle='--', alpha=0.7)
         ax4.legend(loc='upper right')
@@ -832,8 +832,8 @@ class Viz:
         ax5.set_title(f"Angular Velocity Z Component of Point #{self.idx_point}")
         ax5.set_xlabel("Time (s)")
         ax5.set_ylabel("Angular Velocity (rad/s)")
-        ax5.set_xlim(0, 20)
-        ax5.set_ylim(-0.25, 0.25)
+        ax5.set_xlim(0, 7)
+        ax5.set_ylim(-1, 1)
         ax5.grid(True, linestyle='--', alpha=0.7)
         ax5.legend(loc='upper right')
 

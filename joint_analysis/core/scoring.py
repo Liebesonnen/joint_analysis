@@ -247,27 +247,60 @@ def compute_basic_scores(
             mask_svd = (s1 > 1e-6)
             ratio_col[mask_svd] = s2[mask_svd] / s1[mask_svd]
             col_score = super_gaussian(ratio_col, col_sigma, col_order)
+# #b. rad-score
+#     rad_score = torch.zeros(N, device=device)
+#     if Tm1 > 1:
+#         EPS_W = 1e-3
+#         v_mag = torch.norm(v_clean, dim=2)
+#         w_mag = torch.norm(w_clean, dim=2)
+#         r_mat = torch.zeros_like(v_mag)
+#         mask_w_nonzero = (w_mag > EPS_W)
+#         r_mat[mask_w_nonzero] = v_mag[mask_w_nonzero] / w_mag[mask_w_nonzero]
+#         r_i = r_mat[:-1]
+#         r_ip1 = r_mat[1:]
+#         diff_val = torch.zeros_like(r_i)
+#         valid_mask = (r_i > 1e-6) & (r_ip1 > 0)
+#         diff_val[valid_mask] = torch.abs(r_ip1[valid_mask] - r_i[valid_mask]) / (r_i[valid_mask] + 1e-6)
+#         rad_mat = super_gaussian(diff_val, rad_sigma, rad_order)
+#         mask_w_zero = (w_mag < EPS_W)
+#         mask_w_i = mask_w_zero[:-1]
+#         mask_w_ip1 = mask_w_zero[1:]
+#         rad_mat[mask_w_i] = 0
+#         rad_mat[mask_w_ip1] = 0
+#         rad_score = rad_mat.mean(dim=0)
 
+    # (B) rad_score
     rad_score = torch.zeros(N, device=device)
-    if Tm1 > 1:
-        EPS_W = 1e-3
-        v_mag = torch.norm(v_clean, dim=2)
-        w_mag = torch.norm(w_clean, dim=2)
+    if Tm1 > 0:
+        # 只在 w >= omega_thresh 的帧上算 r = v / w
+        v_mag = torch.norm(v_clean, dim=2)  # (T-1, N)
+        w_mag = torch.norm(w_clean, dim=2)  # (T-1, N)
+
+        # valid_mask: 哪些帧 w>=阈值
+        valid_mask = (w_mag >= omega_thresh)
         r_mat = torch.zeros_like(v_mag)
-        mask_w_nonzero = (w_mag > EPS_W)
-        r_mat[mask_w_nonzero] = v_mag[mask_w_nonzero] / w_mag[mask_w_nonzero]
-        r_i = r_mat[:-1]
-        r_ip1 = r_mat[1:]
-        diff_val = torch.zeros_like(r_i)
-        valid_mask = (r_i > 1e-6) & (r_ip1 > 0)
-        diff_val[valid_mask] = torch.abs(r_ip1[valid_mask] - r_i[valid_mask]) / (r_i[valid_mask] + 1e-6)
-        rad_mat = super_gaussian(diff_val, rad_sigma, rad_order)
-        mask_w_zero = (w_mag < EPS_W)
-        mask_w_i = mask_w_zero[:-1]
-        mask_w_ip1 = mask_w_zero[1:]
-        rad_mat[mask_w_i] = 0
-        rad_mat[mask_w_ip1] = 0
-        rad_score = rad_mat.mean(dim=0)
+        # 只有在 valid_mask 才去算 r
+        r_mat[valid_mask] = v_mag[valid_mask] / w_mag[valid_mask]
+
+        # 我们希望: 如果这一点在所有帧里都缺乏有效w => 则rad_score=0
+        # 否则算方差越小 => 1, 方差越大 => 0
+        final_scores = torch.zeros(N, device=device)
+
+        for i in range(N):
+            # 找到该点在哪些帧 w>=阈值
+            valid_frames_i = valid_mask[:, i]  # shape (T-1,)
+            # 收集其 r
+            r_vals_i = r_mat[valid_frames_i, i]
+
+            # 如果没有有效帧 or 只有1帧, => rad_score=0
+            if r_vals_i.numel() <= 1:
+                final_scores[i] = 0.0
+            else:
+                # 计算方差 => super_gaussian 映射
+                var_r_i = torch.var(r_vals_i, unbiased=False)
+                final_scores[i] = super_gaussian(var_r_i, rad_sigma, rad_order)
+
+        rad_score = final_scores
 
 
     # ----------------------------

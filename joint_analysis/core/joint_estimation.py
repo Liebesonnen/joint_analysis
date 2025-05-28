@@ -5,7 +5,6 @@ import math
 import numpy as np
 import torch
 from scipy.signal import savgol_filter
-from sg_filter.so3_functions import sgolayfiltSO3
 from .scoring import (
     normalize_vector_torch, find_neighbors_batch, compute_basic_scores,
     compute_joint_probability_new, compute_motion_salience_batch, se3_log_map_batch,
@@ -30,17 +29,18 @@ def calculate_velocity_and_angular_velocity_for_all_frames(
         savgol_window=5,
         savgol_poly=2,
         use_multi_frame=False,
-        window_radius=2,
+        multi_frame_window_radius=2,
         v_max_threshold=10.0,
         w_max_threshold=30.0,
         use_percentile=False,
-        outlier_percentile=95,
-        use_so3_filter=False  # New parameter to control SO(3) filtering
+        outlier_percentile=95
 ):
     """
     Compute linear and angular velocity for (T,N,3) using improved filtering methods.
     Returns v_arr, w_arr => (T-1, N, 3).
     """
+    from scipy.signal import savgol_filter
+
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     if not isinstance(all_points_history, torch.Tensor):
         all_points_history = torch.tensor(all_points_history, dtype=torch.float32, device=device)
@@ -49,7 +49,7 @@ def calculate_velocity_and_angular_velocity_for_all_frames(
     if T < 2:
         return None, None
 
-    # Step 1: Apply SG filtering to position data first
+    # Step 1: Apply Savitzky-Golay filter to smooth point cloud data
     filtered_points = all_points_history.clone().cpu().numpy()
 
     if use_savgol and (T >= savgol_window):
@@ -59,7 +59,8 @@ def calculate_velocity_and_angular_velocity_for_all_frames(
                 filtered_points[:, n, dim] = savgol_filter(
                     filtered_points[:, n, dim],
                     window_length=savgol_window,
-                    polyorder=savgol_poly
+                    polyorder=savgol_poly,
+                    mode='mirror'
                 )
 
     # Step 2: Calculate linear velocities using SG derivatives directly
@@ -76,7 +77,8 @@ def calculate_velocity_and_angular_velocity_for_all_frames(
                     window_length=savgol_window,
                     polyorder=savgol_poly,
                     deriv=1,
-                    delta=dt
+                    delta=dt,
+                    mode='mirror'
                 )
 
         # Use the velocities for frames 0 to T-2
@@ -89,120 +91,88 @@ def calculate_velocity_and_angular_velocity_for_all_frames(
     # Convert back to tensor for further processing
     filtered_points_tensor = torch.tensor(filtered_points, dtype=torch.float32, device=device)
 
-    # Step 3-6: Angular velocity calculation using SO(3) filtering
-    if use_so3_filter and T > 2:
-        try:
-            # We'll compute a global rotation for the entire point cloud
-            rotation_matrices = np.zeros((3, 3, T))
-            rotation_matrices[:, :, 0] = np.eye(3)  # First frame is identity
+    # Step 3: Calculate angular velocity using improved method
+    w_arr = np.zeros((T - 1, N, 3))
 
-            for t in range(1, T):
-                # Get reference (first) frame and current frame points
-                ref_points = filtered_points_tensor[0]  # First frame as reference
-                cur_points = filtered_points_tensor[t]
+    # Computing rotation matrices and extracting angular velocities
+    for t in range(T - 1):
+        # Current and next frame points
+        current_points = filtered_points_tensor[t]
+        next_points = filtered_points_tensor[t + 1]
 
-                # Center the point clouds
-                ref_center = torch.mean(ref_points, dim=0)
-                cur_center = torch.mean(cur_points, dim=0)
-                ref_centered = ref_points - ref_center
-                cur_centered = cur_points - cur_center
+        # Find neighbors for each point
+        neighbor_idx = find_neighbors_batch(current_points.unsqueeze(0), num_neighbors)[0]
 
-                # Estimate rotation matrix using batch SVD
-                R = estimate_rotation_matrix_batch(
-                    ref_centered.unsqueeze(0),
-                    cur_centered.unsqueeze(0)
-                )[0]
+        # Compute angular velocity for each point
+        for i in range(N):
+            # Get neighborhoods
+            src_neighborhood = current_points[neighbor_idx[i]]
+            dst_neighborhood = next_points[neighbor_idx[i]]
 
-                rotation_matrices[:, :, t] = R.cpu().numpy()
+            # Skip if not enough valid neighbors
+            if src_neighborhood.shape[0] < 3 or dst_neighborhood.shape[0] < 3:
+                continue
 
-            # Extract rotation angles from rotation matrices
-            rotation_angles = np.zeros((3, T))
-            for t in range(T):
-                R = rotation_matrices[:, :, t]
+            # Center points
+            src_center = torch.mean(src_neighborhood, dim=0)
+            dst_center = torch.mean(dst_neighborhood, dim=0)
+            src_centered = src_neighborhood - src_center
+            dst_centered = dst_neighborhood - dst_center
 
-                # Compute the angle using the trace
-                theta = np.arccos(np.clip((np.trace(R) - 1) / 2, -1.0, 1.0))
+            # Compute covariance matrix
+            cov_matrix = torch.matmul(src_centered.transpose(0, 1), dst_centered)
 
-                if np.abs(theta) < 1e-10:
-                    # Identity rotation
-                    rotation_angles[:, t] = np.zeros(3)
-                else:
-                    # Extract rotation vector using the skew-symmetric part
-                    K = (R - R.T) / (2 * np.sin(theta)) if np.abs(theta) > 1e-10 else np.zeros((3, 3))
-                    rotation_angles[0, t] = K[2, 1] * theta
-                    rotation_angles[1, t] = K[0, 2] * theta
-                    rotation_angles[2, t] = K[1, 0] * theta
+            # SVD decomposition
+            try:
+                U, S, Vt = torch.linalg.svd(cov_matrix)
 
-            # Filter the rotation angles with SG filter
-            filtered_angles = np.zeros_like(rotation_angles)
+                # Construct rotation matrix
+                R = torch.matmul(Vt.transpose(0, 1), U.transpose(0, 1))
+
+                # Handle reflection case
+                if torch.det(R) < 0:
+                    Vt[-1, :] *= -1
+                    R = torch.matmul(Vt.transpose(0, 1), U.transpose(0, 1))
+
+                # Ensure R is a valid rotation matrix
+                U, S, Vt = torch.linalg.svd(R)
+                R = torch.matmul(U, Vt)
+
+                # Compute rotation angle
+                cos_theta = (torch.trace(R) - 1) / 2
+                cos_theta = torch.clamp(cos_theta, -1.0, 1.0)
+                theta = torch.acos(cos_theta)
+
+                # Extract angular velocity vector
+                if theta > 1e-6:
+                    sin_theta = torch.sin(theta)
+                    if abs(sin_theta) > 1e-6:
+                        # Extract from skew-symmetric part
+                        W = (R - R.transpose(0, 1)) / (2 * sin_theta)
+                        omega = torch.zeros(3, device=device)
+                        omega[0] = W[2, 1]
+                        omega[1] = W[0, 2]
+                        omega[2] = W[1, 0]
+
+                        # Angular velocity = axis * angle / time
+                        omega = omega * theta / dt
+                        w_arr[t, i] = omega.cpu().numpy()
+            except:
+                # Handle numerical issues
+                pass
+
+    # Apply Savitzky-Golay filter to smooth angular velocity results
+    if use_savgol and (T - 1 >= savgol_window):
+        w_arr_filtered = np.zeros_like(w_arr)
+        for i in range(N):
             for dim in range(3):
-                if T >= savgol_window:
-                    filtered_angles[dim, :] = savgol_filter(
-                        rotation_angles[dim, :],
-                        window_length=savgol_window,
-                        polyorder=savgol_poly,
-                        mode='mirror'
-                    )
-                else:
-                    filtered_angles[dim, :] = rotation_angles[dim, :]
-
-            # Calculate angular velocity directly using SG derivative
-            angular_velocities = np.zeros((T, 3))
-            for dim in range(3):
-                if T >= savgol_window:
-                    # Key change: Use deriv=1 to get first derivative directly
-                    angular_velocities[:, dim] = savgol_filter(
-                        rotation_angles[dim, :],
-                        window_length=savgol_window,
-                        polyorder=savgol_poly,
-                        deriv=1,
-                        delta=dt,  # Time step for proper scaling
-                        mode='mirror'
-                    )
-                else:
-                    # Fallback to finite differences
-                    padded_angles = np.pad(rotation_angles[dim, :], 1, mode='edge')
-                    angular_velocities[:, dim] = np.diff(padded_angles)[:-1] / dt
-
-            # Copy to output array and broadcast to all points
-            w_arr = np.zeros((T - 1, N, 3))
-            for t in range(T - 1):
-                w_arr[t, :, :] = np.tile(angular_velocities[t, :], (N, 1))
-
-        except Exception as e:
-            print(f"SO(3) filtering failed with error: {e}. Falling back to standard method.")
-            use_so3_filter = False
-
-    # Fallback to original method if SO(3) filtering is disabled or failed
-    if not use_so3_filter:
-        # Original neighborhood-based method for angular velocity
-        pts_prev = filtered_points_tensor[:-1]
-        pts_curr = filtered_points_tensor[1:]
-        B = T - 1
-
-        # Use a safe number of neighbors
-        safe_neighbors = min(num_neighbors, N)
-
-        neighbor_idx_prev = find_neighbors_batch(pts_prev, safe_neighbors)
-        neighbor_idx_curr = find_neighbors_batch(pts_curr, safe_neighbors)
-
-        src_batch = pts_prev[torch.arange(B, device=device).view(B, 1, 1), neighbor_idx_prev, :]
-        tar_batch = pts_curr[torch.arange(B, device=device).view(B, 1, 1), neighbor_idx_curr, :]
-        src_2d = src_batch.reshape(B * N, safe_neighbors, 3)
-        tar_2d = tar_batch.reshape(B * N, safe_neighbors, 3)
-
-        R_2d = estimate_rotation_matrix_batch(src_2d, tar_2d)
-        c1_2d = src_2d.mean(dim=1)
-        c2_2d = tar_2d.mean(dim=1)
-        delta_p_2d = c2_2d - c1_2d
-
-        eye_4 = torch.eye(4, device=device).unsqueeze(0).expand(B * N, -1, -1).clone()
-        eye_4[:, :3, :3] = R_2d
-        eye_4[:, :3, 3] = delta_p_2d
-        transform_matrices_2d = eye_4
-        se3_logs_2d = se3_log_map_batch(transform_matrices_2d)
-        w_2d = se3_logs_2d[:, 3:] / dt
-        w_arr = w_2d.reshape(B, N, 3).cpu().numpy()
+                w_arr_filtered[:, i, dim] = savgol_filter(
+                    w_arr[:, i, dim],
+                    window_length=savgol_window,
+                    polyorder=savgol_poly,
+                    mode='mirror'
+                )
+        w_arr = w_arr_filtered
 
     # Apply outlier handling
     v_magnitudes = np.linalg.norm(v_arr, axis=2)
@@ -2125,7 +2095,7 @@ def compute_joint_info_all_types(
         screw_sigma=0.15, screw_order=4.0,
         ball_sigma=0.12, ball_order=4.0,
         use_savgol=True,
-        savgol_window=3,
+        savgol_window=11,
         savgol_poly=2,
         use_multi_frame=False,
         multi_frame_window_radius=10

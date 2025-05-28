@@ -17,7 +17,7 @@ class Viz:
         # Initialize current point index and change flag
         self.idx_point, self.idx_point_changed = 0, False
         # Load revolute joint point cloud data
-        self.d = np.load("./demo_data/s1_gasstove_base_1110_1170.npy")
+        self.d = np.load("./demo_data/revolute.npy")
         # Add random noise
         # self.d += np.random.randn(*self.d.shape) * 0.01
         # Print data shape for debugging

@@ -197,6 +197,5 @@ def main():
     print("启动Polyscope界面...")
     visualizer.run()
 
-
 if __name__ == "__main__":
     main()
