@@ -5,6 +5,7 @@ from scipy.signal import savgol_filter
 from io import BytesIO
 import os
 import json
+import re
 from datetime import datetime
 from robot_utils.viz.polyscope import PolyscopeUtils, ps, psim, register_point_cloud, draw_frame_3d
 
@@ -30,14 +31,17 @@ class EnhancedViz:
         self.current_dataset = 0
         self.noise_sigma = 0.00
 
-        # Load ground truth joint data
-        self.ground_truth_json = "./demo_data/joint_info.json"
+        # Load ground truth joint data from new location
+        self.ground_truth_json = "/common/homes/all/uksqc_chen/projects/control/ParaHome/all_scenes_transformed_axis_pivot_data.json"
         self.ground_truth_data = self.load_ground_truth()
         self.show_ground_truth = False
         self.ground_truth_scale = 0.5
         # Track ground truth visualization elements
         self.gt_curve_networks = []
         self.gt_point_clouds = []
+
+        # Coordinate system settings
+        self.coord_scale = 0.1
 
         # Store multiple datasets dictionary
         self.datasets = {}
@@ -167,29 +171,85 @@ class EnhancedViz:
         """Load ground truth data from JSON file"""
         try:
             with open(self.ground_truth_json, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                print(f"Successfully loaded ground truth data from: {self.ground_truth_json}")
+                print(f"Available scenes: {list(data.keys())}")
+                return data
+        except FileNotFoundError:
+            print(f"Warning: Ground truth file not found at {self.ground_truth_json}")
+            return {}
         except Exception as e:
             print(f"Error loading ground truth data: {e}")
             return {}
 
-    def map_dataset_to_ground_truth(self, display_name):
-        """Map dataset name to ground truth key"""
-        # Extract object type from dataset name (assuming format like "s1_refrigerator_part1_1380_1470")
-        parts = display_name.split('_')
-        if len(parts) >= 2:
-            # Try to find the object type in the ground truth data
-            object_type = parts[1].lower()  # e.g., "refrigerator"
-            if object_type in self.ground_truth_data:
-                # Find part number if present
-                part_info = None
-                if len(parts) >= 3 and parts[2].startswith("part"):
-                    part_num = parts[2]  # e.g., "part1"
-                    if part_num in self.ground_truth_data[object_type]:
-                        part_info = part_num
+    def extract_scene_info_from_filename(self, filename):
+        """Extract scene and object information from filename
 
-                return {"object": object_type, "part": part_info}
+        Args:
+            filename: e.g., "s204_drawer_part2_1320_1440"
 
+        Returns:
+            dict: {"scene": "s204", "object": "drawer", "part": "part2"} or None
+        """
+        # Pattern to match filenames like "s204_drawer_part2_1320_1440"
+        pattern = r'(s\d+)_([^_]+)_(part\d+)_\d+_\d+'
+        match = re.match(pattern, filename)
+
+        if match:
+            scene, object_type, part = match.groups()
+            return {
+                "scene": scene,
+                "object": object_type,
+                "part": part
+            }
+
+        # Alternative pattern for base parts or different naming
+        pattern2 = r'(s\d+)_([^_]+)_(base)_\d+_\d+'
+        match2 = re.match(pattern2, filename)
+
+        if match2:
+            scene, object_type, part = match2.groups()
+            return {
+                "scene": scene,
+                "object": object_type,
+                "part": part
+            }
+
+        print(f"Warning: Could not extract scene info from filename: {filename}")
         return None
+
+    def map_dataset_to_ground_truth(self, display_name):
+        """Map dataset name to ground truth key using new data structure"""
+        scene_info = self.extract_scene_info_from_filename(display_name)
+
+        if not scene_info:
+            return None
+
+        scene = scene_info["scene"]
+        object_type = scene_info["object"]
+        part = scene_info["part"]
+
+        # Check if this scene exists in ground truth data
+        if scene not in self.ground_truth_data:
+            print(f"Warning: Scene {scene} not found in ground truth data")
+            return None
+
+        # Check if this object exists in the scene
+        if object_type not in self.ground_truth_data[scene]:
+            print(f"Warning: Object {object_type} not found in scene {scene} ground truth data")
+            return None
+
+        # Check if this part exists for the object
+        if part not in self.ground_truth_data[scene][object_type]:
+            print(f"Warning: Part {part} not found for {object_type} in scene {scene}")
+            return None
+
+        print(f"Mapped {display_name} -> Scene: {scene}, Object: {object_type}, Part: {part}")
+        return {
+            "scene": scene,
+            "object": object_type,
+            "part": part
+        }
 
     def perform_joint_analysis(self, point_history):
         """Perform joint analysis on point history data"""
@@ -447,23 +507,36 @@ class EnhancedViz:
                 continue
 
             gt_key = dataset["ground_truth_key"]
+            scene = gt_key["scene"]
             object_type = gt_key["object"]
             part_info = gt_key["part"]
 
-            if object_type not in self.ground_truth_data:
+            # Check if scene exists in ground truth data
+            if scene not in self.ground_truth_data:
                 continue
 
-            # If part info is provided, use it, otherwise check all parts
-            if part_info and part_info in self.ground_truth_data[object_type]:
-                self.visualize_ground_truth_joint(object_type, part_info, dataset["display_name"])
-            else:
-                # Just try all parts for this object
-                for part_name in self.ground_truth_data[object_type]:
-                    self.visualize_ground_truth_joint(object_type, part_name, f"{dataset['display_name']}_{part_name}")
+            # Check if object exists in scene data
+            if object_type not in self.ground_truth_data[scene]:
+                continue
 
-    def visualize_ground_truth_joint(self, object_type, part_name, display_name):
+            # Check if part exists in object data
+            if part_info not in self.ground_truth_data[scene][object_type]:
+                continue
+
+            self.visualize_ground_truth_joint(scene, object_type, part_info, dataset["display_name"])
+
+    def visualize_ground_truth_joint(self, scene, object_type, part_name, display_name):
         """Visualize a specific ground truth joint"""
-        joint_info = self.ground_truth_data[object_type][part_name]
+        if scene not in self.ground_truth_data:
+            return
+
+        if object_type not in self.ground_truth_data[scene]:
+            return
+
+        if part_name not in self.ground_truth_data[scene][object_type]:
+            return
+
+        joint_info = self.ground_truth_data[scene][object_type][part_name]
 
         # Extract axis and pivot
         if "axis" not in joint_info or "pivot" not in joint_info:
@@ -601,7 +674,7 @@ class EnhancedViz:
         omega[2] = W[1, 0]
 
         # Angular velocity = axis * angle / time
-        omega = omega * theta / (dt+0.0000000000000000001)
+        omega = omega * theta / (dt + 0.0000000000000000001)
 
         return omega
 
@@ -1028,15 +1101,18 @@ class EnhancedViz:
             gt_key = dataset["ground_truth_key"]
 
             if gt_key:
+                scene = gt_key["scene"]
                 object_type = gt_key["object"]
                 part_info = gt_key["part"]
 
+                psim.Text(f"Scene: {scene}")
                 psim.Text(f"Object Type: {object_type}")
-                if part_info:
-                    psim.Text(f"Part: {part_info}")
+                psim.Text(f"Part: {part_info}")
 
-                    if object_type in self.ground_truth_data and part_info in self.ground_truth_data[object_type]:
-                        joint_info = self.ground_truth_data[object_type][part_info]
+                # Check if ground truth data exists
+                if scene in self.ground_truth_data and object_type in self.ground_truth_data[scene]:
+                    if part_info in self.ground_truth_data[scene][object_type]:
+                        joint_info = self.ground_truth_data[scene][object_type][part_info]
 
                         if "axis" in joint_info:
                             axis = joint_info["axis"]
@@ -1058,189 +1134,84 @@ class EnhancedViz:
                             else:
                                 psim.Text(f"Ground Truth Pivot (parameter): {pivot:.4f}")
 
-                # Compare with current joint estimate
-                if self.current_best_joint in self.current_joint_params and gt_key:
-                    psim.Text("\nComparison with Estimated Joint:")
-                    params = self.current_joint_params[self.current_best_joint]
+                        # Compare with current joint estimate
+                        if self.current_best_joint in self.current_joint_params:
+                            psim.Text("\nComparison with Estimated Joint:")
+                            params = self.current_joint_params[self.current_best_joint]
 
-                    if self.current_best_joint == "revolute" and object_type in self.ground_truth_data:
-                        psim.Text(f"Estimated Type: {self.current_best_joint.capitalize()}")
+                            if self.current_best_joint == "revolute":
+                                psim.Text(f"Estimated Type: {self.current_best_joint.capitalize()}")
 
-                        # Check if we have ground truth axis data
-                        if part_info and part_info in self.ground_truth_data[object_type]:
-                            gt_data = self.ground_truth_data[object_type][part_info]
-                            if "axis" in gt_data:
-                                gt_axis = np.array(gt_data["axis"])
-                                gt_axis_norm = np.linalg.norm(gt_axis)
-                                if gt_axis_norm > 1e-6:
-                                    gt_axis = gt_axis / gt_axis_norm
+                                # Check if we have ground truth axis data
+                                if "axis" in joint_info:
+                                    gt_axis = np.array(joint_info["axis"])
+                                    gt_axis_norm = np.linalg.norm(gt_axis)
+                                    if gt_axis_norm > 1e-6:
+                                        gt_axis = gt_axis / gt_axis_norm
 
-                                est_axis = np.array(params.get("axis", [0, 0, 0]))
-                                est_axis_norm = np.linalg.norm(est_axis)
-                                if est_axis_norm > 1e-6:
-                                    est_axis = est_axis / est_axis_norm
+                                    est_axis = np.array(params.get("axis", [0, 0, 0]))
+                                    est_axis_norm = np.linalg.norm(est_axis)
+                                    if est_axis_norm > 1e-6:
+                                        est_axis = est_axis / est_axis_norm
 
-                                # Calculate angle between axes
-                                dot_product = np.clip(np.abs(np.dot(gt_axis, est_axis)), 0.0, 1.0)
-                                angle_diff = np.arccos(dot_product)
-                                angle_diff_deg = np.degrees(angle_diff)
+                                    # Calculate angle between axes
+                                    dot_product = np.clip(np.abs(np.dot(gt_axis, est_axis)), 0.0, 1.0)
+                                    angle_diff = np.arccos(dot_product)
+                                    angle_diff_deg = np.degrees(angle_diff)
 
-                                psim.Text(f"Axis Angle Difference: {angle_diff_deg:.2f}°")
+                                    psim.Text(f"Axis Angle Difference: {angle_diff_deg:.2f}°")
 
-                                # If angle is more than 90 degrees, axes are nearly opposite
-                                if angle_diff_deg > 90:
-                                    angle_diff_deg = 180 - angle_diff_deg
-                                    psim.Text(f"Axes are nearly opposite. Adjusted angle: {angle_diff_deg:.2f}°")
+                                    # If angle is more than 90 degrees, axes are nearly opposite
+                                    if angle_diff_deg > 90:
+                                        angle_diff_deg = 180 - angle_diff_deg
+                                        psim.Text(f"Axes are nearly opposite. Adjusted angle: {angle_diff_deg:.2f}°")
 
-                                # Calculate distance between axes
-                                # Get origins/pivots for both axes
-                                est_origin = np.array(params.get("origin", [0, 0, 0]))
+                                    # Calculate distance between axes
+                                    est_origin = np.array(params.get("origin", [0, 0, 0]))
 
-                                # Get ground truth pivot
-                                gt_pivot = gt_data.get("pivot", [0, 0, 0])
-                                if isinstance(gt_pivot, list):
-                                    if len(gt_pivot) == 1:
-                                        # Single value pivot - assume it's along the axis from origin
-                                        gt_origin = np.array([0., 0., 0.]) + float(gt_pivot[0]) * gt_axis
-                                    elif len(gt_pivot) == 3:
-                                        gt_origin = np.array(gt_pivot)
+                                    # Get ground truth pivot
+                                    gt_pivot = joint_info.get("pivot", [0, 0, 0])
+                                    if isinstance(gt_pivot, list):
+                                        if len(gt_pivot) == 1:
+                                            # Single value pivot - assume it's along the axis from origin
+                                            gt_origin = np.array([0., 0., 0.]) + float(gt_pivot[0]) * gt_axis
+                                        elif len(gt_pivot) == 3:
+                                            gt_origin = np.array(gt_pivot)
+                                        else:
+                                            gt_origin = np.array([0., 0., 0.])
                                     else:
-                                        gt_origin = np.array([0., 0., 0.])
-                                else:
-                                    # Numeric pivot value
-                                    gt_origin = np.array([0., 0., 0.]) + float(gt_pivot) * gt_axis
+                                        # Numeric pivot value
+                                        gt_origin = np.array([0., 0., 0.]) + float(gt_pivot) * gt_axis
 
-                                # Calculate distance between two lines (axes)
-                                # For skew lines, the distance is ||(p2-p1) · (d1×d2)|| / ||d1×d2||
-                                # For parallel lines, use point-to-line distance
+                                    # Calculate distance between two lines (axes)
+                                    cross_product = np.cross(est_axis, gt_axis)
+                                    cross_norm = np.linalg.norm(cross_product)
 
-                                cross_product = np.cross(est_axis, gt_axis)
-                                cross_norm = np.linalg.norm(cross_product)
+                                    if cross_norm < 1e-6:
+                                        # Axes are parallel, calculate point-to-line distance
+                                        vec_to_point = est_origin - gt_origin
+                                        proj_on_axis = np.dot(vec_to_point, gt_axis) * gt_axis
+                                        perpendicular = vec_to_point - proj_on_axis
+                                        axis_distance = np.linalg.norm(perpendicular)
+                                        psim.Text(f"Axis Distance (parallel): {axis_distance:.4f} m")
+                                    else:
+                                        # Axes are skew, calculate minimum distance between lines
+                                        vec_between = gt_origin - est_origin
+                                        axis_distance = abs(np.dot(vec_between, cross_product)) / cross_norm
+                                        psim.Text(f"Axis Distance (skew): {axis_distance:.4f} m")
 
-                                if cross_norm < 1e-6:
-                                    # Axes are parallel, calculate point-to-line distance
-                                    # Distance from est_origin to gt_axis line
-                                    vec_to_point = est_origin - gt_origin
-                                    proj_on_axis = np.dot(vec_to_point, gt_axis) * gt_axis
-                                    perpendicular = vec_to_point - proj_on_axis
-                                    axis_distance = np.linalg.norm(perpendicular)
-                                    psim.Text(f"Axis Distance (parallel): {axis_distance:.4f} m")
-                                else:
-                                    # Axes are skew, calculate minimum distance between lines
-                                    vec_between = gt_origin - est_origin
-                                    axis_distance = abs(np.dot(vec_between, cross_product)) / cross_norm
-                                    psim.Text(f"Axis Distance (skew): {axis_distance:.4f} m")
-
-                                # Also calculate the distance between origin points
-                                origin_distance = np.linalg.norm(est_origin - gt_origin)
-                                psim.Text(f"Origin Distance: {origin_distance:.4f} m")
-
-                                # Calculate the closest points on each axis
-                                if cross_norm > 1e-6:
-                                    # For skew lines, find closest points
-                                    n = cross_product / cross_norm
-
-                                    # Direction perpendicular to both axes
-                                    n1 = np.cross(est_axis, n)
-                                    n2 = np.cross(gt_axis, n)
-
-                                    # Find the closest points
-                                    c1 = est_origin
-                                    c2 = gt_origin
-
-                                    # Parameter t for closest point on line 2
-                                    if np.dot(n1, gt_axis) != 0:
-                                        t = np.dot(n1, c1 - c2) / np.dot(n1, gt_axis)
-                                        closest_on_gt = c2 + t * gt_axis
-
-                                        # Parameter s for closest point on line 1
-                                        if np.dot(n2, est_axis) != 0:
-                                            s = np.dot(n2, c2 - c1) / np.dot(n2, est_axis)
-                                            closest_on_est = c1 + s * est_axis
-
-                                            psim.Text(
-                                                f"Closest point on est axis: [{closest_on_est[0]:.3f}, {closest_on_est[1]:.3f}, {closest_on_est[2]:.3f}]")
-                                            psim.Text(
-                                                f"Closest point on GT axis: [{closest_on_gt[0]:.3f}, {closest_on_gt[1]:.3f}, {closest_on_gt[2]:.3f}]")
+                                    # Also calculate the distance between origin points
+                                    origin_distance = np.linalg.norm(est_origin - gt_origin)
+                                    psim.Text(f"Origin Distance: {origin_distance:.4f} m")
+                    else:
+                        psim.Text(f"Part {part_info} not found in ground truth for {object_type}")
+                else:
+                    psim.Text("Scene or object not found in ground truth data")
             else:
-                psim.Text("No ground truth data found for this dataset")
+                psim.Text("No ground truth mapping found for this dataset")
 
             psim.TreePop()
 
-
-        # # Display ground truth information for current dataset
-        # if psim.TreeNode("Ground Truth Information"):
-        #     dataset = self.datasets[self.current_dataset_key]
-        #     gt_key = dataset["ground_truth_key"]
-        #
-        #     if gt_key:
-        #         object_type = gt_key["object"]
-        #         part_info = gt_key["part"]
-        #
-        #         psim.Text(f"Object Type: {object_type}")
-        #         if part_info:
-        #             psim.Text(f"Part: {part_info}")
-        #
-        #             if object_type in self.ground_truth_data and part_info in self.ground_truth_data[object_type]:
-        #                 joint_info = self.ground_truth_data[object_type][part_info]
-        #
-        #                 if "axis" in joint_info:
-        #                     axis = joint_info["axis"]
-        #                     psim.Text(f"Ground Truth Axis: [{axis[0]:.4f}, {axis[1]:.4f}, {axis[2]:.4f}]")
-        #
-        #                     # Calculate normalized version
-        #                     axis_norm = np.linalg.norm(axis)
-        #                     if axis_norm > 1e-6:
-        #                         norm_axis = [ax / axis_norm for ax in axis]
-        #                         psim.Text(f"Normalized: [{norm_axis[0]:.4f}, {norm_axis[1]:.4f}, {norm_axis[2]:.4f}]")
-        #
-        #                 if "pivot" in joint_info:
-        #                     pivot = joint_info["pivot"]
-        #                     if isinstance(pivot, list):
-        #                         if len(pivot) == 1:
-        #                             psim.Text(f"Ground Truth Pivot (parameter): {pivot[0]:.4f}")
-        #                         elif len(pivot) == 3:
-        #                             psim.Text(f"Ground Truth Pivot: [{pivot[0]:.4f}, {pivot[1]:.4f}, {pivot[2]:.4f}]")
-        #                     else:
-        #                         psim.Text(f"Ground Truth Pivot (parameter): {pivot:.4f}")
-        #
-        #         # Compare with current joint estimate
-        #         if self.current_best_joint in self.current_joint_params and gt_key:
-        #             psim.Text("\nComparison with Estimated Joint:")
-        #             params = self.current_joint_params[self.current_best_joint]
-        #
-        #             if self.current_best_joint == "revolute" and object_type in self.ground_truth_data:
-        #                 psim.Text(f"Estimated Type: {self.current_best_joint.capitalize()}")
-        #
-        #                 # Check if we have ground truth axis data
-        #                 if part_info and part_info in self.ground_truth_data[object_type]:
-        #                     gt_data = self.ground_truth_data[object_type][part_info]
-        #                     if "axis" in gt_data:
-        #                         gt_axis = np.array(gt_data["axis"])
-        #                         gt_axis_norm = np.linalg.norm(gt_axis)
-        #                         if gt_axis_norm > 1e-6:
-        #                             gt_axis = gt_axis / gt_axis_norm
-        #
-        #                         est_axis = np.array(params.get("axis", [0, 0, 0]))
-        #                         est_axis_norm = np.linalg.norm(est_axis)
-        #                         if est_axis_norm > 1e-6:
-        #                             est_axis = est_axis / est_axis_norm
-        #
-        #                         # Calculate angle between axes
-        #                         dot_product = np.clip(np.abs(np.dot(gt_axis, est_axis)), 0.0, 1.0)
-        #                         angle_diff = np.arccos(dot_product)
-        #                         angle_diff_deg = np.degrees(angle_diff)
-        #
-        #                         psim.Text(f"Axis Angle Difference: {angle_diff_deg:.2f}°")
-        #
-        #                         # If angle is more than 90 degrees, axes are nearly opposite
-        #                         if angle_diff_deg > 90:
-        #                             angle_diff_deg = 180 - angle_diff_deg
-        #                             psim.Text(f"Axes are nearly opposite. Adjusted angle: {angle_diff_deg:.2f}°")
-        #     else:
-        #         psim.Text("No ground truth data found for this dataset")
-        #
-        #     psim.TreePop()
         if psim.TreeNode("Coordinate System Settings"):
             options = ["y_up", "z_up"]
             for i, option in enumerate(options):
@@ -1265,6 +1236,7 @@ class EnhancedViz:
                     ps.set_ground_plane_mode(mode)
 
             psim.TreePop()
+
         # Display current data and joint information
         if psim.TreeNode("Joint Information"):
             # Basic scores
@@ -1336,81 +1308,7 @@ class EnhancedViz:
 if __name__ == "__main__":
     # You can specify multiple data file paths here
     file_paths = [
-
-        # "./demo_data/fridge.npy"
-
-        # open refrigerator 1
-        # "./demo_data/s1_refrigerator_part2_3180_3240.npy",
-        # "./demo_data/s1_refrigerator_base_3180_3240.npy",
-        # "./demo_data/s1_refrigerator_part1_3180_3240.npy"
-
-        # close refrigerator
-        # "./demo_data/s1_refrigerator_part2_3360_3420.npy",
-        # "./demo_data/s1_refrigerator_base_3360_3420.npy",
-        # "./demo_data/s1_refrigerator_part1_3360_3420.npy"
-
-        # open and close drawer (1)
-        # "./demo_data/s2_drawer_part1_1770_1950.npy",
-        # "./demo_data/s2_drawer_base_1770_1950.npy",
-        # "./demo_data/s2_drawer_part2_1770_1950.npy"
-
-        # #open gasstove 1
-        # "./demo_data/s1_gasstove_part2_1110_1170.npy",
-        # "./demo_data/s1_gasstove_part1_1110_1170.npy",
-        # "./demo_data/s1_gasstove_base_1110_1170.npy"
-
-        # close gasstove 1
-        # "./demo_data/s1_gasstove_part2_2760_2850.npy",
-        # "./demo_data/s1_gasstove_part1_2760_2850.npy",
-        # "./demo_data/s1_gasstove_base_2760_2850.npy"
-
-        # open microwave 1
-        #         "./demo_data/s1_microwave_part1_1380_1470.npy",
-        #         "./demo_data/s1_microwave_base_1380_1470.npy"
-
-        # close microwave 1
-        #         "./demo_data/s1_microwave_part1_1740_1830.npy",
-        #         "./demo_data/s1_microwave_base_1740_1830.npy"
-
-
-        # open washingmachine  1
-        # "./demo_data/s2_washingmachine_part1_1140_1170.npy",
-        # "./demo_data/s2_washingmachine_base_1140_1170.npy"
-
-        # close washingmachine  1
-        # "./demo_data/s2_washingmachine_part1_1260_1290.npy",
-        # "./demo_data/s2_washingmachine_base_1260_1290.npy"
-
-        # #chair  1
-        # "./demo_data/s3_chair_base_2610_2760.npy"
-
-        # #chair 1
-        # "./demo_data/s6_chair_base_90_270.npy"
-
-        # open laptop 1
-        # "./demo_data/s3_laptop_part1_3000_3090.npy",
-        # "./demo_data/s3_laptop_base_3000_3090.npy"
-
-        # trashbin
-        # "./demo_data/s6_trashbin_part1_750_900.npy",
-        # "./demo_data/s6_trashbin_base_750_900.npy"
-
-        # #cap
-        # "./demo_data/screw.npy"
-
-        # #prismatic door
-        #         "./demo_data/prismatic.npy"
-        #
-        # #planar
-        #         "./demo_data/planar.npy"
-        #
-        # #ball
-        # "./demo_data/ball.npy"
-
-#1
-        # "./demo_data/revolute.npy"
-        # "/common/homes/all/uksqc_chen/projects/control/ParaHome/output_batch/s104_trashbin_part1_2400_2490.npy"
-        "/common/homes/all/uksqc_chen/projects/control/ParaHome/output_specific_actions/s204_drawer_part2_1320_1440.npy"
+        "/common/homes/all/uksqc_chen/projects/control/ParaHome/output_specific_actions/s190_chair_base_270_390.npy"
     ]
 
     # Create EnhancedViz instance and execute visualization
