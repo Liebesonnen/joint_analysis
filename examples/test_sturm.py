@@ -714,7 +714,7 @@ class EnhancedViz:
         self.idx_point, self.idx_point_changed = 0, False
         # Current selected dataset index
         self.current_dataset = 0
-        self.noise_sigma = 0.01
+        self.noise_sigma = 0.00
 
         # Load ground truth joint data
         self.ground_truth_json = "./demo_data/joint_info.json"
@@ -1907,9 +1907,9 @@ if __name__ == "__main__":
     # You can specify multiple data file paths here
     file_paths = [
         # open refrigerator 1
-        "./demo_data/s1_refrigerator_part2_3180_3240.npy",
-        "./demo_data/s1_refrigerator_base_3180_3240.npy",
-        "./demo_data/s1_refrigerator_part1_3180_3240.npy"
+        # "./demo_data/s1_refrigerator_part2_3180_3240.npy",
+        # "./demo_data/s1_refrigerator_base_3180_3240.npy",
+        # "./demo_data/s1_refrigerator_part1_3180_3240.npy"
 
         # close refrigerator
         # "./demo_data/s1_refrigerator_part2_3360_3420.npy",
@@ -1917,7 +1917,7 @@ if __name__ == "__main__":
         # "./demo_data/s1_refrigerator_part1_3360_3420.npy"
 
         # open and close drawer (1)
-        # "./demo_data/s2_drawer_part1_1770_1950.npy",
+        "./demo_data/s2_drawer_part1_1770_1950.npy",
         # "./demo_data/s2_drawer_base_1770_1950.npy",
         # "./demo_data/s2_drawer_part2_1770_1950.npy"
 
@@ -1965,7 +1965,7 @@ if __name__ == "__main__":
 
         # 1
         # "./demo_data/revolute.npy"
-        # "./demo_data/drawer.npy"
+        "./demo_data/fridge.npy"
     ]
 
     # Create EnhancedViz instance and execute visualization

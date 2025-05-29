@@ -7,7 +7,7 @@ import os
 import json
 from datetime import datetime
 from robot_utils.viz.polyscope import PolyscopeUtils, ps, psim, register_point_cloud, draw_frame_3d
-
+import sys
 # Import joint analysis project modules
 from joint_analysis.joint_analysis.core.joint_estimation import compute_joint_info_all_types
 
@@ -93,15 +93,15 @@ class EnhancedViz:
         self.num_neighbors = 50
 
         # Joint analysis parameters
-        self.col_sigma = 0.2
+        self.col_sigma = 1
         self.col_order = 4.0
-        self.cop_sigma = 0.2
+        self.cop_sigma = 1
         self.cop_order = 4.0
         self.rad_sigma = 0.2
         self.rad_order = 4.0
-        self.zp_sigma = 0.2
+        self.zp_sigma = 1
         self.zp_order = 4.0
-        self.use_savgol = True
+        self.use_savgol = False
         self.savgol_window = 21
         self.savgol_poly = 2
 
@@ -1337,7 +1337,7 @@ if __name__ == "__main__":
     # You can specify multiple data file paths here
     file_paths = [
 
-        # "./demo_data/fridge.npy"
+        "./demo_data/drawer.npy"
 
         # open refrigerator 1
         # "./demo_data/s1_refrigerator_part2_3180_3240.npy",
@@ -1410,7 +1410,7 @@ if __name__ == "__main__":
 #1
         # "./demo_data/revolute.npy"
         # "/common/homes/all/uksqc_chen/projects/control/ParaHome/output_batch/s104_trashbin_part1_2400_2490.npy"
-        "/common/homes/all/uksqc_chen/projects/control/ParaHome/output_specific_actions/s204_drawer_part2_1320_1440.npy"
+        # "/common/homes/all/uksqc_chen/projects/control/ParaHome/output_specific_actions/s204_drawer_part2_1320_1440.npy"
     ]
 
     # Create EnhancedViz instance and execute visualization

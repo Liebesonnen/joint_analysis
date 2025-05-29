@@ -1178,27 +1178,13 @@ def compute_screw_info(all_points_history, v_history, omega_history, w_i, device
         "motion_limit": motion_limit
     }
 
-
 def compute_prismatic_info(all_points_history, v_history, omega_history, w_i, device='cuda'):
     """
-    Estimate parameters for a prismatic joint.
-
-    Args:
-        all_points_history (ndarray): Point history of shape (T,N,3)
-        v_history (ndarray): Linear velocity history of shape (T-1,N,3)
-        omega_history (ndarray): Angular velocity history of shape (T-1,N,3)
-        w_i (ndarray): Point weights of shape (N,)
-        device (str): Device to use for computation
-
-    Returns:
-        dict: Dictionary containing prismatic joint parameters
+    Estimate the sliding axis for a prismatic joint. Also compute a rough motion range.
     """
     global prismatic_axis_reference
-
     all_points_history = torch.as_tensor(all_points_history, dtype=torch.float32, device=device)
-    # v_history = torch.as_tensor(v_history, dtype=torch.float32, device=device) if v_history is not None else None
     w_i = torch.as_tensor(w_i, dtype=torch.float32, device=device)
-
     T, N = all_points_history.shape[0], all_points_history.shape[1]
     if T < 2:
         return {
@@ -1206,123 +1192,19 @@ def compute_prismatic_info(all_points_history, v_history, omega_history, w_i, de
             "origin": np.array([0., 0., 0.]),
             "motion_limit": (0., 0.)
         }
-
-    # Method 1: Use displacement vectors to directly estimate axis direction
-    # Calculate displacement vectors between consecutive frames
-    displacements = all_points_history[1:] - all_points_history[:-1]  # (T-1, N, 3)
-
-    # Keep only significant displacement vectors
-    disp_norms = torch.norm(displacements, dim=2)  # (T-1, N)
-    mean_disp = torch.mean(disp_norms)
-    mask = disp_norms > 0.1 * mean_disp  # (T-1, N)
-
-    if mask.any():
-        # Reshape for easier filtering
-        disp_flat = displacements.reshape(-1, 3)  # ((T-1)*N, 3)
-        mask_flat = mask.reshape(-1)  # ((T-1)*N)
-
-        # Extract valid displacements
-        valid_disps = disp_flat[mask_flat]  # (K, 3)
-
-        # Get corresponding weights for each displacement
-        batch_indices, point_indices = torch.nonzero(mask, as_tuple=True)
-        valid_weights = w_i[point_indices]  # (K)
-
-        # Normalize displacement vectors
-        disp_dirs = normalize_vector_torch(valid_disps)  # (K, 3)
-
-        # Weighted average
-        axis_direct = torch.sum(disp_dirs * valid_weights.unsqueeze(1), dim=0)  # (3)
-        axis_direct = normalize_vector_torch(axis_direct.unsqueeze(0))[0]  # (3)
-
-        # Calculate axis alignment score
-        alignment_scores = torch.abs(torch.sum(disp_dirs * axis_direct.unsqueeze(0), dim=1))  # (K)
-        mean_alignment = torch.mean(alignment_scores).item()
-
-        # If alignment is high, use direct method
-        if mean_alignment > 0.9:
-            axis_sum = axis_direct
-        else:
-            # Otherwise use PCA method (potentially more stable)
-            # Reshape for point-wise processing
-            pos_history_n_tc = all_points_history.permute(1, 0, 2).contiguous()  # (N, T, 3)
-
-            # Center points
-            mean_pos = pos_history_n_tc.mean(dim=1, keepdim=True)  # (N, 1, 3)
-            centered = pos_history_n_tc - mean_pos  # (N, T, 3)
-
-            # Compute batch covariance matrices
-            covs = torch.bmm(centered.transpose(1, 2), centered)  # (N, 3, 3)
-
-            # Add regularization
-            eye_batch = torch.eye(3, device=device).unsqueeze(0).expand(N, -1, -1)
-            covs = covs + 1e-9 * eye_batch
-
-            # Batch eigendecomposition
-            eigvals, eigvecs = torch.linalg.eigh(covs)  # (N, 3), (N, 3, 3)
-
-            # Extract principal directions
-            max_vecs = eigvecs[:, :, 2]  # (N, 3)
-            max_vecs = normalize_vector_torch(max_vecs)  # (N, 3)
-
-            # Ensure direction consistency
-            ref_vec = max_vecs[0]  # (3)
-            # Calculate dot products with reference
-            dots = torch.sum(max_vecs * ref_vec.unsqueeze(0), dim=1)  # (N)
-            # Flip where needed
-            flip_mask = dots < 0
-            max_vecs[flip_mask] = -max_vecs[flip_mask]
-
-            # Compute weighted direction with squared weights
-            confidence_weight = torch.pow(w_i, 2.0)  # (N)
-            weighted_dir = torch.sum(max_vecs * confidence_weight.unsqueeze(-1), dim=0)  # (3)
-            axis_sum = normalize_vector_torch(weighted_dir.unsqueeze(0))[0]  # (3)
-
-            # If PCA and direct methods agree, increase confidence
-            if torch.dot(axis_sum, axis_direct) > 0.9:
-                # Use original method result
-                pass
-            else:
-                # If methods disagree, take the one with larger dot product
-                if torch.dot(axis_direct, axis_direct) > torch.dot(axis_sum, axis_sum):
-                    axis_sum = axis_direct
-    else:
-        # If no valid displacements, use Method 2 (PCA)
-        # Reshape for point-wise processing
-        pos_history_n_tc = all_points_history.permute(1, 0, 2).contiguous()  # (N, T, 3)
-
-        # Center points
-        mean_pos = pos_history_n_tc.mean(dim=1, keepdim=True)  # (N, 1, 3)
-        centered = pos_history_n_tc - mean_pos  # (N, T, 3)
-
-        # Compute batch covariance matrices
-        covs = torch.bmm(centered.transpose(1, 2), centered)  # (N, 3, 3)
-
-        # Add regularization
-        eye_batch = torch.eye(3, device=device).unsqueeze(0).expand(N, -1, -1)
-        covs = covs + 1e-9 * eye_batch
-
-        # Batch eigendecomposition
-        eigvals, eigvecs = torch.linalg.eigh(covs)  # (N, 3), (N, 3, 3)
-
-        # Extract principal directions
-        max_vecs = eigvecs[:, :, 2]  # (N, 3)
-        max_vecs = normalize_vector_torch(max_vecs)  # (N, 3)
-
-        # Ensure direction consistency
-        ref_vec = max_vecs[0]  # (3)
-        # Calculate dot products with reference
-        dots = torch.sum(max_vecs * ref_vec.unsqueeze(0), dim=1)  # (N)
-        # Flip where needed
-        flip_mask = dots < 0
-        max_vecs[flip_mask] = -max_vecs[flip_mask]
-
-        # Compute weighted direction - use squared weights for emphasis
-        confidence_weight = torch.pow(w_i, 2.0)  # (N)
-        weighted_dir = torch.sum(max_vecs * confidence_weight.unsqueeze(-1), dim=0)  # (3)
-        axis_sum = normalize_vector_torch(weighted_dir.unsqueeze(0))[0]  # (3)
-
-    # Ensure direction consistency
+    pos_history_n_tc = all_points_history.permute(1, 0, 2).contiguous()
+    mean_pos = pos_history_n_tc.mean(dim=1, keepdim=True)
+    centered = pos_history_n_tc - mean_pos
+    covs = torch.einsum('ntm,ntk->nmk', centered, centered)
+    B_n = covs.shape[0]
+    epsilon_eye = 1e-9 * torch.eye(3, device=device)
+    for i in range(B_n):
+        covs[i] += epsilon_eye
+    eigvals, eigvecs = torch.linalg.eigh(covs)
+    max_vecs = eigvecs[:, :, 2]
+    max_vecs = normalize_vector_torch(max_vecs)
+    weighted_dir = torch.sum(max_vecs * w_i.unsqueeze(-1), dim=0)
+    axis_sum = normalize_vector_torch(weighted_dir.unsqueeze(0))[0]
     if prismatic_axis_reference is None:
         prismatic_axis_reference = axis_sum.clone()
     else:
@@ -1330,24 +1212,186 @@ def compute_prismatic_info(all_points_history, v_history, omega_history, w_i, de
         if dot_val < 0:
             axis_sum = -axis_sum
 
-    # Use first frame first point as origin
-    origin = all_points_history[0, 0]  # (3)
-
-    # Calculate motion limits - displacement along axis direction
-    pts = all_points_history[:, 0, :]  # (T, 3)
-
-    # Calculate projections to axis
-    origin_to_pts = pts - origin  # (T, 3)
-    projections = torch.sum(origin_to_pts * axis_sum, dim=1)  # (T)
-
-    min_proj = float(projections.min().item())
-    max_proj = float(projections.max().item())
-
+    base_pt = all_points_history[0, 0]
+    pts = all_points_history[:, 0, :]
+    vecs = pts - base_pt.unsqueeze(0)
+    val_ = torch.einsum('tj,j->t', vecs, axis_sum)
+    min_proj = float(val_.min().item())
+    max_proj = float(val_.max().item())
     return {
         "axis": axis_sum.cpu().numpy(),
-        "origin": origin.cpu().numpy(),
+        "origin": base_pt.cpu().numpy(),
         "motion_limit": (min_proj, max_proj)
     }
+# def compute_prismatic_info(all_points_history, v_history, omega_history, w_i, device='cuda'):
+#     """
+#     Estimate parameters for a prismatic joint.
+#
+#     Args:
+#         all_points_history (ndarray): Point history of shape (T,N,3)
+#         v_history (ndarray): Linear velocity history of shape (T-1,N,3)
+#         omega_history (ndarray): Angular velocity history of shape (T-1,N,3)
+#         w_i (ndarray): Point weights of shape (N,)
+#         device (str): Device to use for computation
+#
+#     Returns:
+#         dict: Dictionary containing prismatic joint parameters
+#     """
+#     global prismatic_axis_reference
+#
+#     all_points_history = torch.as_tensor(all_points_history, dtype=torch.float32, device=device)
+#     # v_history = torch.as_tensor(v_history, dtype=torch.float32, device=device) if v_history is not None else None
+#     w_i = torch.as_tensor(w_i, dtype=torch.float32, device=device)
+#
+#     T, N = all_points_history.shape[0], all_points_history.shape[1]
+#     if T < 2:
+#         return {
+#             "axis": np.array([0., 0., 0.]),
+#             "origin": np.array([0., 0., 0.]),
+#             "motion_limit": (0., 0.)
+#         }
+#
+#     # Method 1: Use displacement vectors to directly estimate axis direction
+#     # Calculate displacement vectors between consecutive frames
+#     displacements = all_points_history[1:] - all_points_history[:-1]  # (T-1, N, 3)
+#
+#     # Keep only significant displacement vectors
+#     disp_norms = torch.norm(displacements, dim=2)  # (T-1, N)
+#     mean_disp = torch.mean(disp_norms)
+#     mask = disp_norms > 0.1 * mean_disp  # (T-1, N)
+#
+#     if mask.any():
+#         # Reshape for easier filtering
+#         disp_flat = displacements.reshape(-1, 3)  # ((T-1)*N, 3)
+#         mask_flat = mask.reshape(-1)  # ((T-1)*N)
+#
+#         # Extract valid displacements
+#         valid_disps = disp_flat[mask_flat]  # (K, 3)
+#
+#         # Get corresponding weights for each displacement
+#         batch_indices, point_indices = torch.nonzero(mask, as_tuple=True)
+#         valid_weights = w_i[point_indices]  # (K)
+#
+#         # Normalize displacement vectors
+#         disp_dirs = normalize_vector_torch(valid_disps)  # (K, 3)
+#
+#         # Weighted average
+#         axis_direct = torch.sum(disp_dirs * valid_weights.unsqueeze(1), dim=0)  # (3)
+#         axis_direct = normalize_vector_torch(axis_direct.unsqueeze(0))[0]  # (3)
+#
+#         # Calculate axis alignment score
+#         alignment_scores = torch.abs(torch.sum(disp_dirs * axis_direct.unsqueeze(0), dim=1))  # (K)
+#         mean_alignment = torch.mean(alignment_scores).item()
+#
+#         # If alignment is high, use direct method
+#         if mean_alignment > 0.9:
+#             axis_sum = axis_direct
+#         else:
+#             # Otherwise use PCA method (potentially more stable)
+#             # Reshape for point-wise processing
+#             pos_history_n_tc = all_points_history.permute(1, 0, 2).contiguous()  # (N, T, 3)
+#
+#             # Center points
+#             mean_pos = pos_history_n_tc.mean(dim=1, keepdim=True)  # (N, 1, 3)
+#             centered = pos_history_n_tc - mean_pos  # (N, T, 3)
+#
+#             # Compute batch covariance matrices
+#             covs = torch.bmm(centered.transpose(1, 2), centered)  # (N, 3, 3)
+#
+#             # Add regularization
+#             eye_batch = torch.eye(3, device=device).unsqueeze(0).expand(N, -1, -1)
+#             covs = covs + 1e-9 * eye_batch
+#
+#             # Batch eigendecomposition
+#             eigvals, eigvecs = torch.linalg.eigh(covs)  # (N, 3), (N, 3, 3)
+#
+#             # Extract principal directions
+#             max_vecs = eigvecs[:, :, 2]  # (N, 3)
+#             max_vecs = normalize_vector_torch(max_vecs)  # (N, 3)
+#
+#             # Ensure direction consistency
+#             ref_vec = max_vecs[0]  # (3)
+#             # Calculate dot products with reference
+#             dots = torch.sum(max_vecs * ref_vec.unsqueeze(0), dim=1)  # (N)
+#             # Flip where needed
+#             flip_mask = dots < 0
+#             max_vecs[flip_mask] = -max_vecs[flip_mask]
+#
+#             # Compute weighted direction with squared weights
+#             confidence_weight = torch.pow(w_i, 2.0)  # (N)
+#             weighted_dir = torch.sum(max_vecs * confidence_weight.unsqueeze(-1), dim=0)  # (3)
+#             axis_sum = normalize_vector_torch(weighted_dir.unsqueeze(0))[0]  # (3)
+#
+#             # If PCA and direct methods agree, increase confidence
+#             if torch.dot(axis_sum, axis_direct) > 0.9:
+#                 # Use original method result
+#                 pass
+#             else:
+#                 # If methods disagree, take the one with larger dot product
+#                 if torch.dot(axis_direct, axis_direct) > torch.dot(axis_sum, axis_sum):
+#                     axis_sum = axis_direct
+#     else:
+#         # If no valid displacements, use Method 2 (PCA)
+#         # Reshape for point-wise processing
+#         pos_history_n_tc = all_points_history.permute(1, 0, 2).contiguous()  # (N, T, 3)
+#
+#         # Center points
+#         mean_pos = pos_history_n_tc.mean(dim=1, keepdim=True)  # (N, 1, 3)
+#         centered = pos_history_n_tc - mean_pos  # (N, T, 3)
+#
+#         # Compute batch covariance matrices
+#         covs = torch.bmm(centered.transpose(1, 2), centered)  # (N, 3, 3)
+#
+#         # Add regularization
+#         eye_batch = torch.eye(3, device=device).unsqueeze(0).expand(N, -1, -1)
+#         covs = covs + 1e-9 * eye_batch
+#
+#         # Batch eigendecomposition
+#         eigvals, eigvecs = torch.linalg.eigh(covs)  # (N, 3), (N, 3, 3)
+#
+#         # Extract principal directions
+#         max_vecs = eigvecs[:, :, 2]  # (N, 3)
+#         max_vecs = normalize_vector_torch(max_vecs)  # (N, 3)
+#
+#         # Ensure direction consistency
+#         ref_vec = max_vecs[0]  # (3)
+#         # Calculate dot products with reference
+#         dots = torch.sum(max_vecs * ref_vec.unsqueeze(0), dim=1)  # (N)
+#         # Flip where needed
+#         flip_mask = dots < 0
+#         max_vecs[flip_mask] = -max_vecs[flip_mask]
+#
+#         # Compute weighted direction - use squared weights for emphasis
+#         confidence_weight = torch.pow(w_i, 2.0)  # (N)
+#         weighted_dir = torch.sum(max_vecs * confidence_weight.unsqueeze(-1), dim=0)  # (3)
+#         axis_sum = normalize_vector_torch(weighted_dir.unsqueeze(0))[0]  # (3)
+#
+#     # Ensure direction consistency
+#     if prismatic_axis_reference is None:
+#         prismatic_axis_reference = axis_sum.clone()
+#     else:
+#         dot_val = torch.dot(axis_sum, prismatic_axis_reference)
+#         if dot_val < 0:
+#             axis_sum = -axis_sum
+#
+#     # Use first frame first point as origin
+#     origin = all_points_history[0, 0]  # (3)
+#
+#     # Calculate motion limits - displacement along axis direction
+#     pts = all_points_history[:, 0, :]  # (T, 3)
+#
+#     # Calculate projections to axis
+#     origin_to_pts = pts - origin  # (T, 3)
+#     projections = torch.sum(origin_to_pts * axis_sum, dim=1)  # (T)
+#
+#     min_proj = float(projections.min().item())
+#     max_proj = float(projections.max().item())
+#
+#     return {
+#         "axis": axis_sum.cpu().numpy(),
+#         "origin": origin.cpu().numpy(),
+#         "motion_limit": (min_proj, max_proj)
+#     }
 
 
 def normalize_vector_torch(v, eps=1e-6):

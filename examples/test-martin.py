@@ -1814,12 +1814,12 @@ if __name__ == "__main__":
         # "./demo_data/s6_trashbin_base_750_900.npy"
 
         # #cap
-        "./demo_data/screw.npy"
+        # "./demo_data/screw.npy"
+        #
+        # # #ball
+        # "./demo_data/ball.npy"
 
-        # #ball
-        "./demo_data/ball.npy"
-
-        # "./demo_data/prismatic.npy"
+        "./demo_data/prismatic.npy"
 
     ]
 
