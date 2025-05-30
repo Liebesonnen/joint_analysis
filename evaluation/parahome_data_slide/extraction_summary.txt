@@ -1,0 +1,23 @@
+ParaHome Specific Action Extraction Summary
+==================================================
+
+Total scenes processed: s1 to s207
+Target actions: open microwave, close microwave, open refrigerator, close refrigerator, open washing machine, close washing machine, sit on chair, get up from chair, throw away in trash, take out from drawer
+Total actions found: 1415
+
+Actions per type:
+  open microwave: 122 actions
+  close microwave: 120 actions
+  open refrigerator: 162 actions
+  close refrigerator: 162 actions
+  open washing machine: 116 actions
+  close washing machine: 116 actions
+  sit on chair: 226 actions
+  get up from chair: 184 actions
+  throw away in trash: 107 actions
+  take out from drawer: 100 actions
+
+Point cloud files saved in: /common/homes/students/uksqc_chen/projects/control/ParaHome/output_specific_actions
+File format: {scene_id}_{object_name}_{part_name}_{start_frame}_{end_frame}.npy
+Data shape: (n_frames, 500, 3)
+Note: Only moving parts are saved (excluding base parts except for chairs)

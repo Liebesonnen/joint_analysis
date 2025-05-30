@@ -12,9 +12,9 @@ setup(
         "dearpygui>=1.8.0",
         "matplotlib>=3.5.0",
     ],
-    author="Your Name",
-    author_email="your.email@example.com",
-    description="A package for estimating and analyzing joint types from point cloud data",
-    keywords="computer vision, robotics, point cloud, joint estimation",
+    author="Rui Cheng",
+    author_email="cr1744733299@gmail.com",
+    description="A package for estimating and analyzing joint types from dense point trajectories",
+    keywords="computer vision, robotics, joint estimation",
     python_requires=">=3.7",
 )
