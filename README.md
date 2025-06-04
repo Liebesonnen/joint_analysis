@@ -1,7 +1,6 @@
 # Joint Analysis
 
-## 🚨 **CRITICAL INFORMATION FOR CODE HANDOVER**
-
+![Demo](gif/1.gif)
 ### **📁 Key Directories Overview**
 
 #### **1. `evaluation/` - Primary Experimental Results**
@@ -27,7 +26,7 @@ Our main joint analysis framework and tools
 ### **Step 1: Environment Setup**
 ```bash
 # Clone and setup
-git clone git@git.h2t.iar.kit.edu:student-projects/ma-rui-chen/joint_analysis.git
+git clone https://github.com/Liebesonnen/joint_analysis.git
 cd joint_analysis
 
 # Install dependencies
