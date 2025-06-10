@@ -59,6 +59,7 @@ evaluation/
 cd evaluation/
 python my_evaluation_slide.py
 ```
+It will open a Polyscope GUI, xxxx TODO
 
 **Sturm Method:**
 ```bash
