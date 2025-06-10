@@ -1,3 +1,5 @@
+from joint_analysis.build.lib.evaluation.unwrap import velocity
+
 # Reproductions
 
 This repository contains reproductions of three influential papers in the field of articulated object analysis, joint estimation, and motion filtering. Each reproduction focuses on different aspects of understanding and tracking articulated objects from sensor data.
@@ -39,13 +41,8 @@ This reproduction implements Savitzky-Golay filtering techniques specifically de
 ### Usage
 ```python
 # Generate synthetic rotation data with noise
-R_noisy = generate_noisy_rotations()
-
-# Apply Savitzky-Golay filter
-R_est, omega_est, domega_est, t_filtered = sgolayfiltSO3(R_noisy, p=3, n=20, freq=1000)
-
-# Compare with finite differencing
-omega_fd = finite_difference_angular_velocity(R_noisy)
+cd sg_filter_for_angular-velocity
+python savizky_golay_so3.py
 ```
 
 ## 2. Sturm et al.（2012）
@@ -86,13 +83,9 @@ This reproduction implements a framework for detecting and modeling articulated 
 
 ### Usage
 ```python
-# Initialize articulation demo
-main()  # Starts interactive Polyscope interface
-
-# Programmatic usage
-model = fit_and_select_best_model(point_cloud_data)
-joint_type = model.get_joint_filter_type()
-parameters = model.extract_joint_parameters()
+cd ..
+cd stuerm
+python reproduction_sturm.py
 ```
 
 ## 3. Martin-Martin et al.（2022)
@@ -137,15 +130,8 @@ This reproduction implements a multi-level recursive estimation framework for re
 
 ### Usage
 ```python
-# Initialize multi-level system
-perception_system = MultiLevelArticulatedPerception()
-perception_system.initialize(initial_point_cloud)
-
-# Process frame sequence
-for frame in point_cloud_sequence:
-    joint_types, joint_parameters = perception_system.process_frame(frame)
-
-# Get final results
-results = perception_system.get_joint_estimation_results()
+cd ..
+cd martin_martin
+python reproduction_martin.py
 ```
 ```
