@@ -1,12 +1,13 @@
 # Joint Analysis
 
 ## 🎯 **Quick Start for Handover**
-
 ### **Step 1: Environment Setup**
-source robot-utils/scripts/install.sh joint_analysis
-[//]: # (pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121)
 ```bash
 # Clone and setup
+mkdir -p ROOT_PATH_TO_INSTALL_EVERYTHING
+git clone https://gitlab.com/jianfenggaobit/robot-utils.git
+source robot-utils/scripts/install.sh joint_analysis
+cd ..
 git clone git@git.h2t.iar.kit.edu:student-projects/ma-rui-chen/joint_analysis.git
 cd joint_analysis
 
