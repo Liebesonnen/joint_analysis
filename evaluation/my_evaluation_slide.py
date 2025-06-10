@@ -90,7 +90,7 @@ class EnhancedViz:
             self.d_filter = current_data["data_filter"]
             self.dv_filter = current_data["dv_filter"]
         else:
-            print("No datasets loaded.")
+            ic("No datasets loaded.")
             return
 
         # Average time step
@@ -174,14 +174,14 @@ class EnhancedViz:
         try:
             with open(self.ground_truth_json, 'r') as f:
                 data = json.load(f)
-                print(f"Successfully loaded ground truth data from: {self.ground_truth_json}")
-                print(f"Available scenes: {list(data.keys())}")
+                ic(f"Successfully loaded ground truth data from: {self.ground_truth_json}")
+                ic(f"Available scenes: {list(data.keys())}")
                 return data
         except FileNotFoundError:
-            print(f"Warning: Ground truth file not found at {self.ground_truth_json}")
+            ic(f"Warning: Ground truth file not found at {self.ground_truth_json}")
             return {}
         except Exception as e:
-            print(f"Error loading ground truth data: {e}")
+            ic(f"Error loading ground truth data: {e}")
             return {}
 
     def extract_scene_info_from_filename(self, filename):
@@ -217,7 +217,7 @@ class EnhancedViz:
                 "part": part
             }
 
-        print(f"Warning: Could not extract scene info from filename: {filename}")
+        ic(f"Warning: Could not extract scene info from filename: {filename}")
         return None
 
     def map_dataset_to_ground_truth(self, display_name):
@@ -233,20 +233,20 @@ class EnhancedViz:
 
         # Check if this scene exists in ground truth data
         if scene not in self.ground_truth_data:
-            print(f"Warning: Scene {scene} not found in ground truth data")
+            ic(f"Warning: Scene {scene} not found in ground truth data")
             return None
 
         # Check if this object exists in the scene
         if object_type not in self.ground_truth_data[scene]:
-            print(f"Warning: Object {object_type} not found in scene {scene} ground truth data")
+            ic(f"Warning: Object {object_type} not found in scene {scene} ground truth data")
             return None
 
         # Check if this part exists for the object
         if part not in self.ground_truth_data[scene][object_type]:
-            print(f"Warning: Part {part} not found for {object_type} in scene {scene}")
+            ic(f"Warning: Part {part} not found for {object_type} in scene {scene}")
             return None
 
-        print(f"Mapped {display_name} -> Scene: {scene}, Object: {object_type}, Part: {part}")
+        ic(f"Mapped {display_name} -> Scene: {scene}, Object: {object_type}, Part: {part}")
         return {
             "scene": scene,
             "object": object_type,
@@ -272,73 +272,73 @@ class EnhancedViz:
         )
 
         # Print joint analysis results
-        print("\n" + "=" * 80)
-        print(f"Joint Type: {best_joint}")
-        print("=" * 80)
+        console.rule()
+        ic(f"Joint Type: {best_joint}")
+        console.rule()
 
         # Print basic scores
         if info_dict and "basic_score_avg" in info_dict:
             basic_scores = info_dict["basic_score_avg"]
-            print("\nBasic Scores:")
-            print(f"Collinearity Score: {basic_scores.get('col_mean', 0.0):.16f}")
-            print(f"Coplanarity Score: {basic_scores.get('cop_mean', 0.0):.16f}")
-            print(f"Radius Consistency Score: {basic_scores.get('rad_mean', 0.0):.16f}")
-            print(f"Zero Pitch Score: {basic_scores.get('zp_mean', 0.0):.16f}")
+            ic(f"Basic Scores:"
+               "Collinearity Score: {basic_scores.get('col_mean', 0.0):.16f}"
+               "Coplanarity Score: {basic_scores.get('cop_mean', 0.0):.16f}"
+               "Radius Consistency Score: {basic_scores.get('rad_mean', 0.0):.16f}"
+               "Zero Pitch Score: {basic_scores.get('zp_mean', 0.0):.16f}")
 
         # Print joint probabilities
         if info_dict and "joint_probs" in info_dict:
             joint_probs = info_dict["joint_probs"]
-            print("\nJoint Probabilities:")
+            console.log("[bold green]Joint Probabilities:")
             for joint_type, prob in joint_probs.items():
-                print(f"{joint_type.capitalize()}: {prob:.16f}")
+                console.log(f"{joint_type.capitalize()}: {prob:.16f}")
 
         # Print joint parameters
         if best_joint in joint_params:
             params = joint_params[best_joint]
-            print(f"\n{best_joint.capitalize()} Joint Parameters:")
+            ic(f"\n{best_joint.capitalize()} Joint Parameters:")
 
             if best_joint == "planar":
                 normal = params.get("normal", [0, 0, 0])
                 motion_limit = params.get("motion_limit", (0, 0))
-                print(f"Normal Vector: [{normal[0]:.16f}, {normal[1]:.16f}, {normal[2]:.16f}]")
-                print(f"Motion Limit: ({motion_limit[0]:.16f}, {motion_limit[1]:.16f})")
+                ic(f"Normal Vector: [{normal[0]:.16f}, {normal[1]:.16f}, {normal[2]:.16f}]")
+                ic(f"Motion Limit: ({motion_limit[0]:.16f}, {motion_limit[1]:.16f})")
 
             elif best_joint == "ball":
                 center = params.get("center", [0, 0, 0])
                 radius = params.get("radius", 0)
                 motion_limit = params.get("motion_limit", (0, 0, 0))
-                print(f"Center: [{center[0]:.16f}, {center[1]:.16f}, {center[2]:.16f}]")
-                print(f"Radius: {radius:.16f}")
-                print(f"Motion Limit: ({motion_limit[0]:.16f}, {motion_limit[1]:.16f}, {motion_limit[2]:.16f}) rad")
+                ic(f"Center: [{center[0]:.16f}, {center[1]:.16f}, {center[2]:.16f}]")
+                ic(f"Radius: {radius:.16f}")
+                ic(f"Motion Limit: ({motion_limit[0]:.16f}, {motion_limit[1]:.16f}, {motion_limit[2]:.16f}) rad")
 
             elif best_joint == "screw":
                 axis = params.get("axis", [0, 0, 0])
                 origin = params.get("origin", [0, 0, 0])
                 pitch = params.get("pitch", 0)
                 motion_limit = params.get("motion_limit", (0, 0))
-                print(f"Axis: [{axis[0]:.16f}, {axis[1]:.16f}, {axis[2]:.16f}]")
-                print(f"Origin: [{origin[0]:.16f}, {origin[1]:.16f}, {origin[2]:.16f}]")
-                print(f"Pitch: {pitch:.16f}")
-                print(f"Motion Limit: ({motion_limit[0]:.16f}, {motion_limit[1]:.16f}) rad")
+                ic(f"Axis: [{axis[0]:.16f}, {axis[1]:.16f}, {axis[2]:.16f}]")
+                ic(f"Origin: [{origin[0]:.16f}, {origin[1]:.16f}, {origin[2]:.16f}]")
+                ic(f"Pitch: {pitch:.16f}")
+                ic(f"Motion Limit: ({motion_limit[0]:.16f}, {motion_limit[1]:.16f}) rad")
 
             elif best_joint == "prismatic":
                 axis = params.get("axis", [0, 0, 0])
                 origin = params.get("origin", [0, 0, 0])
                 motion_limit = params.get("motion_limit", (0, 0))
-                print(f"Axis: [{axis[0]:.16f}, {axis[1]:.16f}, {axis[2]:.16f}]")
-                print(f"Origin: [{origin[0]:.16f}, {origin[1]:.16f}, {origin[2]:.16f}]")
-                print(f"Motion Limit: ({motion_limit[0]:.16f}, {motion_limit[1]:.16f}) m")
+                ic(f"Axis: [{axis[0]:.16f}, {axis[1]:.16f}, {axis[2]:.16f}]")
+                ic(f"Origin: [{origin[0]:.16f}, {origin[1]:.16f}, {origin[2]:.16f}]")
+                ic(f"Motion Limit: ({motion_limit[0]:.16f}, {motion_limit[1]:.16f}) m")
 
             elif best_joint == "revolute":
                 axis = params.get("axis", [0, 0, 0])
                 origin = params.get("origin", [0, 0, 0])
                 motion_limit = params.get("motion_limit", (0, 0))
-                print(f"Axis: [{axis[0]:.16f}, {axis[1]:.16f}, {axis[2]:.16f}]")
-                print(f"Origin: [{origin[0]:.16f}, {origin[1]:.16f}, {origin[2]:.16f}]")
-                print(f"Motion Limit: ({motion_limit[0]:.16f}, {motion_limit[1]:.16f}) rad")
-                print(f"Motion Range: {np.degrees(motion_limit[1] - motion_limit[0]):.16f}°")
+                ic(f"Axis: [{axis[0]:.16f}, {axis[1]:.16f}, {axis[2]:.16f}]")
+                ic(f"Origin: [{origin[0]:.16f}, {origin[1]:.16f}, {origin[2]:.16f}]")
+                ic(f"Motion Limit: ({motion_limit[0]:.16f}, {motion_limit[1]:.16f}) rad")
+                ic(f"Motion Range: {np.degrees(motion_limit[1] - motion_limit[0]):.16f}°")
 
-        print("=" * 80 + "\n")
+        console.rule()
 
         return joint_params, best_joint, info_dict
 
@@ -945,7 +945,7 @@ class EnhancedViz:
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close(fig)
 
-        print(f"Plot saved to: {filename}")
+        ic(f"Plot saved to: {filename}")
         return filename
 
     def callback(self):
