@@ -1,30 +1,10 @@
 # Joint Analysis
 
-## 🚨 **CRITICAL INFORMATION FOR CODE HANDOVER**
-
-### **📁 Key Directories Overview**
-
-#### **1. `evaluation/` - Primary Experimental Results**
-Contains experimental code and results for **Parahome Dataset** analysis:
-- **Our Method**: Joint analysis implementation and results
-- **Sturm et al. (2012)， Martin-Martin et al. (2022)**: Baseline comparison implementation
-- **Dataset Location**: Parahome dataset is located in the `/common/datasets/users/gao/kvil/art_kvil/ma_rui/`
-- **📖 Details**: See `evaluation/README.md` for complete experimental setup and reproduction instructions
-
-#### **2. `reproduction_paper/` - Paper Reproductions**
-- **Sturm et al. (2012)**: Joint estimation methodology
-- **Martin-Martin et al. (2022)**: Joint estimation methodology  
-- **Jongenee et al. (2022)**: Estimation of angular velocity
-- **📖 Details**: See `reproduction_paper/README.md` for individual paper reproduction guides
-
-#### **3. `joint_analysis/` - Core Implementation**
-Our main joint analysis framework and tools
-
----
-
 ## 🎯 **Quick Start for Handover**
 
 ### **Step 1: Environment Setup**
+source robot-utils/scripts/install.sh joint_analysis
+[//]: # (pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121)
 ```bash
 # Clone and setup
 git clone git@git.h2t.iar.kit.edu:student-projects/ma-rui-chen/joint_analysis.git
@@ -50,6 +30,27 @@ cd reproduction_paper/
 - Ensure you have access to the shared dataset location
 - Dataset structure and usage detailed in `evaluation/README.md`
 
+
+## 🚨 **CRITICAL INFORMATION FOR CODE HANDOVER**
+
+### **📁 Key Directories Overview**
+
+#### **1. `evaluation/` - Primary Experimental Results**
+Contains experimental code and results for **Parahome Dataset** analysis:
+- **Our Method**: Joint analysis implementation and results
+- **Sturm et al. (2012)， Martin-Martin et al. (2022)**: Baseline comparison implementation
+- **Dataset Location**: Parahome dataset is located in the `/common/datasets/users/gao/kvil/art_kvil/ma_rui/`
+- **📖 Details**: See `evaluation/README.md` for complete experimental setup and reproduction instructions
+
+#### **2. `reproduction_paper/` - Paper Reproductions**
+- **Sturm et al. (2012)**: Joint estimation methodology
+- **Martin-Martin et al. (2022)**: Joint estimation methodology  
+- **Jongenee et al. (2022)**: Estimation of angular velocity
+- **📖 Details**: See `reproduction_paper/README.md` for individual paper reproduction guides
+
+#### **3. `joint_analysis/` - Core Implementation**
+Our main joint analysis framework and tools
+
 ---
 
 ## 📂 **Core Framework: `joint_analysis/`**
@@ -59,7 +60,7 @@ cd reproduction_paper/
 #### **Application Entry Points**
 ```bash
 # Primary application
-python run_application.py [--output-dir DIR] [--save-plots] [--no-gui]
+python run_application.py
 
 # Direct module execution
 python -m joint_analysis.main

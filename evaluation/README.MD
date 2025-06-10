@@ -45,9 +45,7 @@ evaluation/
 
 ## Environment Setup
 
-### Dependency Installation
 ```bash
-pip install numpy scipy matplotlib pillow polyscope torch
 ```
 
 ## Reproduction Guide
@@ -94,6 +92,8 @@ python -m evaluation_martin_slide_batch
 
 ### Thesis Version Reproduction
 
+
+![Image](closewash.png)
 #### Single-file Visualization Testing
 ```bash
 python my_evaluation_thesis.py

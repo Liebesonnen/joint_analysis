@@ -833,7 +833,7 @@ class EnhancedViz:
         self.noise_sigma = 0
 
         # Load ground truth joint data
-        self.ground_truth_json = "./demo_data/joint_info.json"
+        self.ground_truth_json = "./parahome_data_thesis/joint_info.json"
         self.ground_truth_data = self.load_ground_truth()
         self.show_ground_truth = False
         self.ground_truth_scale = 0.5
@@ -1763,9 +1763,9 @@ if __name__ == "__main__":
     # You can specify multiple data file paths here
     file_paths = [
         # open refrigerator 1
-        # "./demo_data/s1_refrigerator_part2_3180_3240.npy",
-        # "./demo_data/s1_refrigerator_base_3180_3240.npy",
-        # "./demo_data/s1_refrigerator_part1_3180_3240.npy"
+        "./parahome_data_thesis/s1_refrigerator_part2_3180_3240.npy",
+        "./parahome_data_thesis/s1_refrigerator_base_3180_3240.npy",
+        "./parahome_data_thesis/s1_refrigerator_part1_3180_3240.npy"
 
         # close refrigerator
         # "./demo_data/s1_refrigerator_part2_3360_3420.npy",
@@ -1819,7 +1819,7 @@ if __name__ == "__main__":
         # # #ball
         # "./demo_data/ball.npy"
 
-        "./demo_data/prismatic.npy"
+        # "./demo_data/prismatic.npy"
 
     ]
 

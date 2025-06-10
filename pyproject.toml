@@ -1,0 +1,286 @@
+[project]
+name = "joint-analysis"
+version = "0.1.0"
+authors = [
+    {name = "Rui Cheng", email = "cr1744733299@gmail.com"},
+    {name = "Jianfeng Gao", email = "jianfeng.gao@kit.edu"},
+]
+description = "A framework for estimating and analyzing joint types from point cloud data using advanced filtering and multi-level perception techniques"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["robotics", "joint-analysis", "point-cloud", "computer-vision", "articulated-objects", "3d-vision"]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    # Core scientific computing - 稳定的版本区间
+    "numpy>=1.20.0,<2.0.0",           # 避免 numpy 2.x 可能的破坏性变更
+    "scipy>=1.7.0,<1.14.0",          # 允许 1.x 系列的稳定更新
+    "matplotlib>=3.5.0,<3.9.0",       # 3.x 系列稳定版本
+    "scikit-learn>=1.0.0,<1.6.0",     # 1.x 系列机器学习库
+
+    # Deep learning framework - PyTorch 生态系统
+    "torch>=2.0.0,<2.6.0",           # PyTorch 2.x 系列
+    "torchvision>=0.15.0,<0.21.0",   # 对应 torch 版本的 torchvision
+    "torchaudio>=2.0.0,<2.6.0",      # 对应 torch 版本的 torchaudio
+
+    # 3D data processing and visualization - 关键可视化库
+    "polyscope==2.4.0",       # 3D 可视化，避免主版本更新
+    "open3d>=0.16.0,<0.19.0",        # 3D 处理库稳定版本
+    "dearpygui==1.8.0",     # GUI 库 - 移至可选依赖避免 GLIBC 问题
+
+    # Computer vision - 图像处理
+    "opencv-python>=4.5.0,<4.11.0",  # OpenCV 4.x 系列
+    "Pillow>=8.0.0,<11.0.0",         # PIL 图像处理库
+
+    # Data processing and utilities - 数据处理工具
+    "pandas>=1.3.0,<2.3.0",          # 数据分析库
+    "seaborn>=0.11.0,<0.14.0",       # 统计可视化
+    "tqdm>=4.60.0,<5.0.0",           # 进度条库
+    "click>=8.0.0,<9.0.0",           # 命令行工具
+    "pyyaml>=6.0.0,<7.0.0",          # YAML 处理
+    "tabulate>=0.9.0,<1.0.0",        # 表格格式化
+
+    # Logging and debugging - 调试工具
+    "coloredlogs>=15.0,<16.0",       # 彩色日志
+    "icecream>=2.1.0,<3.0.0",        # 调试工具
+    "rich>=12.0.0,<14.0.0",          # 富文本输出
+
+    # Data serialization - 数据序列化
+    "marshmallow>=3.15.0,<4.0.0",    # 序列化库
+    "marshmallow-dataclass>=8.5.0,<9.0.0",  # 数据类支持
+    "marshmallow_enum>=1.5.1,<2.0.0", # 枚举支持
+
+    # Additional utilities for the project - 项目特定工具
+    "natsort>=8.0.0,<9.0.0",         # 自然排序
+    "deprecation>=2.1.0,<3.0.0",     # 弃用警告
+    "typeguard>=2.13.0,<5.0.0",      # 类型检查
+    "einops>=0.6.0,<1.0.0",          # 张量操作
+]
+
+[project.optional-dependencies]
+# Development dependencies - 根据可能的兼容版本
+dev = [
+    "pytest>=8.3.0,<8.4.0",          # 测试框架
+    "pytest-cov>=4.0.0,<6.0.0",     # 测试覆盖率
+    "flake8>=5.0.0,<8.0.0",          # 代码检查
+    "black>=22.0.0,<25.0.0",         # 代码格式化
+    "isort>=5.10.0,<6.0.0",          # import 排序
+    "mypy>=1.0.0,<2.0.0",            # 类型检查
+    "types-setuptools>=57.0.0,<70.0.0", # 类型定义
+    "pre-commit>=2.15.0,<4.0.0",     # Git 钩子
+]
+
+# Evaluation and research dependencies - 根据您的实际版本
+research = [
+    "jupyter-core==5.7.2",    # 匹配您的 5.7.2
+    "notebook>=6.4.0,<8.0.0",        # Notebook 界面
+    "ipywidgets==8.1.5",      # 匹配您的 8.1.5
+    "wandb==0.19.7",         # 匹配您的 0.19.7
+    "tensorboardx>=2.6.0,<2.7.0",    # 匹配您的 2.6.2.2
+    "gpytorch==1.14.0",      # 匹配您的 1.14
+]
+
+# GUI 支持 - 根据您成功安装的版本
+gui = [
+    "dearpygui==1.8.0",       # 匹配您的 1.8.0（已成功安装）
+    "ipywidgets==8.1.0",      # 交互式组件
+]
+
+# 无头模式依赖 - 基于您的实际版本
+headless = [
+    "matplotlib==3.10.0",    # 匹配您的 3.10.0
+    "plotly==6.0.0",          # 匹配您的 6.0.0
+    "ipython==8.32.0",       # 匹配您的 8.32.0
+]
+
+# Full robot-utils integration - 根据您的实际安装版本
+robot-utils = [
+    "robot-utils==1.0.0",     # 匹配您环境中的 1.0.0
+    "gdown==5.2.0",           # 匹配您的 5.2.0
+    "distlib==0.3.9",         # 匹配您的 0.3.9
+    "GitPython==3.1.44",      # 匹配您的 3.1.44
+    "pathos==0.3.3",          # 匹配您的 0.3.3
+    "wandb==0.19.7",         # 匹配您的 0.19.7
+    "torchsummary==1.5.1",    # 匹配您的 1.5.1
+    "tensorboard_logger==0.1.0", # 匹配您的 0.1.0
+    "inquirer==3.4.0",        # 匹配您的 3.4.0
+]
+
+# All optional dependencies
+all = [
+    "joint-analysis[dev,research,robot-utils,headless]"
+]
+
+# 完整 GUI 环境（需要较新系统）
+full-gui = [
+    "joint-analysis[dev,research,robot-utils,gui,headless]"
+]
+
+[project.urls]
+Homepage = "https://github.com/Liebesonnen/joint_analysis"
+Repository = "https://github.com/Liebesonnen/joint_analysis.git"
+Documentation = "https://github.com/Liebesonnen/joint_analysis/blob/main/README.md"
+"Bug Tracker" = "https://github.com/Liebesonnen/joint_analysis/issues"
+
+[project.scripts]
+# Main application entry points
+joint-analysis = "joint_analysis.main:main"
+joint-analysis-gui = "joint_analysis.main:run_gui_application"
+joint-analysis-eval = "joint_analysis.main:run_evaluation"
+
+# Evaluation scripts
+eval-martin = "evaluation.evaluation_martin_thesis:main"
+eval-sturm = "evaluation.evaluation_sturm:main"
+eval-my-thesis = "evaluation.my_evaluation_thesis:main"
+
+# Reproduction scripts
+reproduce-martin = "reproduction_paper.martin_martin.reproduction_martin:main"
+reproduce-sturm = "reproduction_paper.sturm.reproduction_sturm:main"
+reproduce-so3 = "reproduction_paper.so3_savgol.savitzky_golay_so3:main"
+
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["joint_analysis*", "evaluation*", "reproduction_paper*"]
+exclude = ["tests*", "demo_data*", "*.egg-info*"]
+
+[tool.setuptools.package-data]
+"joint_analysis" = ["*.yaml", "*.yml", "*.json"]
+"evaluation" = ["*.json", "*.yaml"]
+"reproduction_paper" = ["*.json", "*.yaml"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | \.conda
+  | build
+  | dist
+  | demo_data
+  | exported_pointclouds
+  | demo_screenshots
+  | demo_plots
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+known_third_party = [
+    "numpy", "scipy", "matplotlib", "torch", "cv2", "polyscope",
+    "dearpygui", "sklearn", "open3d", "PIL", "pandas", "seaborn"
+]
+known_first_party = ["joint_analysis", "evaluation", "reproduction_paper"]
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # Set to false for research code flexibility
+warn_redundant_casts = true
+warn_unused_ignores = true
+check_untyped_defs = true
+no_implicit_optional = true
+
+# Ignore missing imports for some third-party libraries
+[[tool.mypy.overrides]]
+module = [
+    "polyscope.*",
+    "dearpygui.*",
+    "open3d.*",
+    "robot_utils.*",
+    "cv2.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "joint_analysis", "evaluation"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "--disable-warnings",
+    "--color=yes"
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "gpu: marks tests as requiring GPU",
+    "integration: marks tests as integration tests",
+    "visualization: marks tests as requiring display",
+]
+
+[tool.coverage.run]
+source = ["joint_analysis"]
+omit = [
+    "*/tests/*",
+    "*/demo_data/*",
+    "*/evaluation/*",
+    "*/reproduction_paper/*",
+    "setup.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]  # unused imports in __init__.py
+"evaluation/*.py" = ["E402", "F401", "F841"]  # Allow research code flexibility
+"reproduction_paper/*.py" = ["E402", "F401", "F841"]  # Allow research code flexibility

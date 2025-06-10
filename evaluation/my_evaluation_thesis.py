@@ -11,7 +11,7 @@ import sys
 # Import joint analysis project modules
 from joint_analysis.joint_analysis.core.joint_estimation import compute_joint_info_all_types
 
-
+sys.path.append('/common/homes/all/uksqc_chen/projects/control')
 class EnhancedViz:
     def __init__(self, file_paths=None):
         # Initialize default file paths list if none provided
@@ -31,7 +31,7 @@ class EnhancedViz:
         self.noise_sigma = 0.00
 
         # Load ground truth joint data
-        self.ground_truth_json = "./demo_data/joint_info.json"
+        self.ground_truth_json = "./parahome_data_thesis/joint_info.json"
         self.ground_truth_data = self.load_ground_truth()
         self.show_ground_truth = False
         self.ground_truth_scale = 0.5
@@ -93,13 +93,13 @@ class EnhancedViz:
         self.num_neighbors = 50
 
         # Joint analysis parameters
-        self.col_sigma = 1
+        self.col_sigma = 0.2
         self.col_order = 4.0
-        self.cop_sigma = 1
+        self.cop_sigma = 0.2
         self.cop_order = 4.0
         self.rad_sigma = 0.2
         self.rad_order = 4.0
-        self.zp_sigma = 1
+        self.zp_sigma = 0.2
         self.zp_order = 4.0
         self.use_savgol = False
         self.savgol_window = 21
@@ -1337,78 +1337,75 @@ if __name__ == "__main__":
     # You can specify multiple data file paths here
     file_paths = [
 
-        "./demo_data/drawer.npy"
+        # "./parahome_data_thesis/drawer.npy"
 
         # open refrigerator 1
-        # "./demo_data/s1_refrigerator_part2_3180_3240.npy",
-        # "./demo_data/s1_refrigerator_base_3180_3240.npy",
-        # "./demo_data/s1_refrigerator_part1_3180_3240.npy"
+        "./parahome_data_thesis/s1_refrigerator_part2_3180_3240.npy",
+        "./parahome_data_thesis/s1_refrigerator_base_3180_3240.npy",
+        "./parahome_data_thesis/s1_refrigerator_part1_3180_3240.npy"
 
         # close refrigerator
-        # "./demo_data/s1_refrigerator_part2_3360_3420.npy",
-        # "./demo_data/s1_refrigerator_base_3360_3420.npy",
-        # "./demo_data/s1_refrigerator_part1_3360_3420.npy"
+        # "./parahome_data_thesis/s1_refrigerator_part2_3360_3420.npy",
+        # "./parahome_data_thesis/s1_refrigerator_base_3360_3420.npy",
+        # "./parahome_data_thesis/s1_refrigerator_part1_3360_3420.npy"
 
         # open and close drawer (1)
-        # "./demo_data/s2_drawer_part1_1770_1950.npy",
-        # "./demo_data/s2_drawer_base_1770_1950.npy",
-        # "./demo_data/s2_drawer_part2_1770_1950.npy"
+        # "./parahome_data_thesis/s2_drawer_part1_1770_1950.npy",
+        # "./parahome_data_thesis/s2_drawer_base_1770_1950.npy",
+        # "./parahome_data_thesis/s2_drawer_part2_1770_1950.npy"
 
-        # #open gasstove 1
-        # "./demo_data/s1_gasstove_part2_1110_1170.npy",
-        # "./demo_data/s1_gasstove_part1_1110_1170.npy",
-        # "./demo_data/s1_gasstove_base_1110_1170.npy"
+        # open gasstove 1
+        # "./parahome_data_thesis/s1_gasstove_part2_1110_1170.npy",
+        # "./parahome_data_thesis/s1_gasstove_part1_1110_1170.npy",
+        # "./parahome_data_thesis/s1_gasstove_base_1110_1170.npy"
 
         # close gasstove 1
-        # "./demo_data/s1_gasstove_part2_2760_2850.npy",
-        # "./demo_data/s1_gasstove_part1_2760_2850.npy",
-        # "./demo_data/s1_gasstove_base_2760_2850.npy"
+        # "./parahome_data_thesis/s1_gasstove_part2_2760_2850.npy",
+        # "./parahome_data_thesis/s1_gasstove_part1_2760_2850.npy",
+        # "./parahome_data_thesis/s1_gasstove_base_2760_2850.npy"
 
         # open microwave 1
-        #         "./demo_data/s1_microwave_part1_1380_1470.npy",
-        #         "./demo_data/s1_microwave_base_1380_1470.npy"
+        # "./parahome_data_thesis/s1_microwave_part1_1380_1470.npy",
+        # "./parahome_data_thesis/s1_microwave_base_1380_1470.npy"
 
         # close microwave 1
-        #         "./demo_data/s1_microwave_part1_1740_1830.npy",
-        #         "./demo_data/s1_microwave_base_1740_1830.npy"
+        # "./parahome_data_thesis/s1_microwave_part1_1740_1830.npy",
+        # "./parahome_data_thesis/s1_microwave_base_1740_1830.npy"
 
+        # open washingmachine 1
+        # "./parahome_data_thesis/s2_washingmachine_part1_1140_1170.npy",
+        # "./parahome_data_thesis/s2_washingmachine_base_1140_1170.npy"
 
-        # open washingmachine  1
-        # "./demo_data/s2_washingmachine_part1_1140_1170.npy",
-        # "./demo_data/s2_washingmachine_base_1140_1170.npy"
+        # close washingmachine 1
+        # "./parahome_data_thesis/s2_washingmachine_part1_1260_1290.npy",
+        # "./parahome_data_thesis/s2_washingmachine_base_1260_1290.npy"
 
-        # close washingmachine  1
-        # "./demo_data/s2_washingmachine_part1_1260_1290.npy",
-        # "./demo_data/s2_washingmachine_base_1260_1290.npy"
-
-        # #chair  1
-        # "./demo_data/s3_chair_base_2610_2760.npy"
-
-        # #chair 1
-        # "./demo_data/s6_chair_base_90_270.npy"
+        # chair 1
+        # "./parahome_data_thesis/s3_chair_base_2610_2760.npy"
+        # "./parahome_data_thesis/s6_chair_base_90_270.npy"
 
         # open laptop 1
-        # "./demo_data/s3_laptop_part1_3000_3090.npy",
-        # "./demo_data/s3_laptop_base_3000_3090.npy"
+        # "./parahome_data_thesis/s3_laptop_part1_3000_3090.npy",
+        # "./parahome_data_thesis/s3_laptop_base_3000_3090.npy"
 
         # trashbin
-        # "./demo_data/s6_trashbin_part1_750_900.npy",
-        # "./demo_data/s6_trashbin_base_750_900.npy"
+        # "./parahome_data_thesis/s6_trashbin_part1_750_900.npy",
+        # "./parahome_data_thesis/s6_trashbin_base_750_900.npy"
 
-        # #cap
-        # "./demo_data/screw.npy"
+        # cap
+        # "./parahome_data_thesis/screw.npy"
 
-        # #prismatic door
-        #         "./demo_data/prismatic.npy"
-        #
-        # #planar
-        #         "./demo_data/planar.npy"
-        #
-        # #ball
-        # "./demo_data/ball.npy"
+        # prismatic door
+        # "./parahome_data_thesis/prismatic.npy"
 
-#1
-        # "./demo_data/revolute.npy"
+        # planar
+        # "./parahome_data_thesis/planar.npy"
+
+        # ball
+        # "./parahome_data_thesis/ball.npy"
+
+        # revolute
+        # "./parahome_data_thesis/revolute.npy"
         # "/common/homes/all/uksqc_chen/projects/control/ParaHome/output_batch/s104_trashbin_part1_2400_2490.npy"
         # "/common/homes/all/uksqc_chen/projects/control/ParaHome/output_specific_actions/s204_drawer_part2_1320_1440.npy"
     ]

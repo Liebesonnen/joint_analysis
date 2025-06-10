@@ -819,7 +819,7 @@ class ImprovedJointAnalysisEvaluator:
         self.noise_std = noise_std
 
         # Load ground truth joint data
-        self.ground_truth_json = "/common/homes/all/uksqc_chen/projects/control/ParaHome/all_scenes_transformed_axis_pivot_data.json"
+        self.ground_truth_json = "./parahome_data_slide/all_scenes_transformed_axis_pivot_data.json"
         self.ground_truth_data = self.load_ground_truth()
 
         # Define expected joint types for each object
@@ -1268,7 +1268,7 @@ class ImprovedJointAnalysisEvaluator:
 def main():
     """Main function to run the evaluation"""
     # Configuration
-    directory_path = "/common/homes/all/uksqc_chen/projects/control/ParaHome/output_specific_actions"
+    directory_path = "./parahome_data_slide"
     noise_levels = [0.01]  # Different noise levels to test
 
     for noise_std in noise_levels:

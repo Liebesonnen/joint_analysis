@@ -17,7 +17,7 @@ class EnhancedViz:
     def __init__(self, file_paths=None):
         # Initialize default file paths list if none provided
         if file_paths is None:
-            self.file_paths = ["./demo_data/s1_gasstove_part2_1110_1170.npy"]
+            self.file_paths = [".parahome_data-slides/s1_gasstove_part2_1110_1170.npy"]
         else:
             self.file_paths = file_paths
 
@@ -32,7 +32,7 @@ class EnhancedViz:
         self.noise_sigma = 0.00
 
         # Load ground truth joint data from new location
-        self.ground_truth_json = "/common/homes/all/uksqc_chen/projects/control/ParaHome/all_scenes_transformed_axis_pivot_data.json"
+        self.ground_truth_json = "./parahome_data_slide/all_scenes_transformed_axis_pivot_data.json"
         self.ground_truth_data = self.load_ground_truth()
         self.show_ground_truth = False
         self.ground_truth_scale = 0.5
@@ -1308,7 +1308,7 @@ class EnhancedViz:
 if __name__ == "__main__":
     # You can specify multiple data file paths here
     file_paths = [
-        "/common/homes/all/uksqc_chen/projects/control/ParaHome/output_specific_actions/s190_chair_base_270_390.npy"
+        "./parahome_data_slide//s190_chair_base_270_390.npy"
     ]
 
     # Create EnhancedViz instance and execute visualization

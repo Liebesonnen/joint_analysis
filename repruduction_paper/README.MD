@@ -148,12 +148,4 @@ for frame in point_cloud_sequence:
 # Get final results
 results = perception_system.get_joint_estimation_results()
 ```
-
-## Installation and Dependencies
-
-### Required Packages
-```bash
-pip install numpy scipy matplotlib torch
-pip install polyscope dearpygui  # For visualization
-pip install scikit-learn gpytorch  # For GP models
 ```
