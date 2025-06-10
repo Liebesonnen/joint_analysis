@@ -7,10 +7,12 @@ import os
 import json
 import re
 from datetime import datetime
+
+from robot_utils import console
 from robot_utils.viz.polyscope import PolyscopeUtils, ps, psim, register_point_cloud, draw_frame_3d
 
 # Import joint analysis project modules
-from joint_analysis.joint_analysis.core.joint_estimation import compute_joint_info_all_types
+from joint_analysis.core.joint_estimation import compute_joint_info_all_types
 
 
 class EnhancedViz:

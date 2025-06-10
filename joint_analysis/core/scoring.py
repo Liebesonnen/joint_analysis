@@ -4,6 +4,8 @@ Scoring functions for joint type estimation.
 
 import torch
 import numpy as np
+from joint_analysis.core.type import JointType, ExpectedScore, JointExpectedScores
+from joint_analysis.core.utils import get_data_path
 
 
 

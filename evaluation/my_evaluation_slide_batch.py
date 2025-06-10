@@ -10,7 +10,7 @@ import glob
 
 sys.path.append('/common/homes/all/uksqc_chen/projects/control')
 # Import joint analysis project modules
-from joint_analysis.joint_analysis.core.joint_estimation import compute_joint_info_all_types
+from joint_analysis.core.joint_estimation import compute_joint_info_all_types
 
 class ImprovedJointAnalysisEvaluator:
     def __init__(self, directory_path=None, noise_std=0.0):
