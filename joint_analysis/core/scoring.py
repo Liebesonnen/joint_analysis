@@ -8,6 +8,8 @@ from joint_analysis.core.type import JointType, ExpectedScore, JointExpectedScor
 from joint_analysis.core.utils import get_data_path
 
 
+#joint_exp_scores = JointExpectedScores.load(get_validate_file(get_data_path() / "joint_expected_scores.yaml"))
+
 
 def super_gaussian(x, sigma, order):
     """
@@ -373,6 +375,90 @@ def compute_joint_probability_new(col, cop, rad, zp, joint_type="prismatic",
         return super_gaussian(e, ball_sigma, ball_order)
 
     return torch.zeros_like(col)
+
+
+# def compute_joint_probability_todo(
+#         col: torch.Tensor,
+#         cop, rad, zp,
+#         # joint_exp_score: JointExpectedScores,
+#         expected_score: ExpectedScore,
+#         joint_type: JointType = "prismatic",
+#         sigma: float,
+#         order: float,
+#         prob_sigma=0.1, prob_order=4.0,
+#         prismatic_sigma: float = 0.08,
+#         prismatic_order=5.0,
+#         planar_sigma=0.12, planar_order=4.0,
+#         revolute_sigma=0.08, revolute_order=5.0,
+#         screw_sigma=0.15, screw_order=4.0,
+#         ball_sigma=0.12, ball_order=4.0
+# ):
+#     """
+#     TODO:
+#      - typing
+#      - correct Docstring
+#      - naming of functions
+#     Compute joint probability (0~1) based on the four fundamental scores.
+#
+#     Args:
+#         col (Tensor): Collinearity scores of shape (N,)
+#         cop (Tensor): Coplanarity scores of shape (N,)
+#         rad (Tensor): Radius consistency scores of shape (N,)
+#         zp (Tensor): Zero pitch scores of shape (N,)
+#         joint_type (str): Type of joint to compute probability for
+#         prob_sigma (float): Width parameter for probability function
+#         prob_order (float): Order parameter for probability function
+#
+#     Returns:
+#         Tensor: Joint probability scores of shape (N,)
+#     """
+#     # if joint_type not in JointType:
+#     #     raise KeyError(f"joint type {joint_type} is not supported")
+#
+#     # es: ExpectedScore = {
+#     #     JointType.Prismatic: joint_exp_score.prismatic,
+#     #     JointType.Revolute: joint_exp_score.revolute,
+#     # }[joint_type]
+#     es = expected_score
+#
+#     # sigma = {
+#     #     "prismatic": 0.08,
+#     #     "revolute": 0.08,
+#     # }[joint_type]
+#     # order = {
+#     #     "prismatic": 5,
+#     #     "revolute": 5,
+#     # }[joint_type]
+#
+#     e = ((col - es.col) ** 2 + (cop - es.cop) ** 2 + (rad - es.radius) ** 2 + (zp - es.pitch) ** 2) / 4
+#     return super_gaussian(e, sigma, order)
+#     #
+#     # if joint_type == "prismatic":
+#     #     # Prismatic: col->1, cop->0, rad->0, zp->1
+#     #     e = ((col - 1) ** 2 + (cop - 1) ** 2 + (rad - 0) ** 2 + (zp - 1) ** 2) / 4
+#     #     return super_gaussian(e, prismatic_sigma, prismatic_order)
+#     #
+#     # elif joint_type == "planar":
+#     #     # Planar: col->0, cop->1, rad->0, zp->1
+#     #     e = (col ** 2 + (cop - 1) ** 2 + rad ** 2 + (zp - 1) ** 2) / 4
+#     #     return super_gaussian(e, planar_sigma, planar_order)
+#     #
+#     # elif joint_type == "revolute":
+#     #     # Revolute: col->0, cop->1, rad->1, zp->1
+#     #     e = (col ** 2 + (cop - 1) ** 2 + (rad - 1) ** 2 + (zp - 1) ** 2) / 4
+#     #     return super_gaussian(e, revolute_sigma, revolute_order)
+#     #
+#     # elif joint_type == "screw":
+#     #     # Screw: col->0, cop->0, rad->1, zp->0
+#     #     e = (col ** 2 + cop ** 2 + (rad - 1) ** 2 + zp ** 2) / 4
+#     #     return super_gaussian(e, screw_sigma, screw_order)
+#     #
+#     # elif joint_type == "ball":
+#     #     # Ball: col->0, cop->0, rad->1, zp->1
+#     #     e = (col ** 2 + cop ** 2 + (rad - 1) ** 2 + (zp - 1) ** 2) / 4
+#     #     return super_gaussian(e, ball_sigma, ball_order)
+#
+#     return torch.zeros_like(col)
 
 
 def compute_motion_salience_batch_neighborhood(all_points_history, device='cuda', k=10):
