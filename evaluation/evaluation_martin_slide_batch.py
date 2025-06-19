@@ -17,12 +17,8 @@ from scipy.optimize import minimize
 # Import joint analysis project modules - commented out since we're implementing it directly
 
 
-###############################################################################
-#                          通用辅助函数 (旋转、平移、等)                        #
-###############################################################################
 
 def quaternion_to_matrix(qx, qy, qz, qw):
-    """将四元数转换为 3x3 旋转矩阵（保证四元数归一化）"""
     norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
     if norm < 1e-12:
         return np.eye(3)
@@ -45,7 +41,6 @@ def quaternion_to_matrix(qx, qy, qz, qw):
 
 
 def rotation_angle_from_matrix(R):
-    """从旋转矩阵中提取旋转角度"""
     trace = np.trace(R)
     val = (trace - 1.0) / 2.0
     val = max(-1.0, min(1.0, val))

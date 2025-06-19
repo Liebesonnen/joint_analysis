@@ -59,17 +59,31 @@ evaluation/
 cd evaluation/
 python my_evaluation_slide.py
 ```
-It will open a Polyscope GUI, xxxx TODO
+
+This command opens a Polyscope GUI interface that provides comprehensive interactive visualization capabilities:
+
+**GUI Interface Features:**
+- **Ground Truth Visualization**: Click the "Show Ground Truth" checkbox to display the actual joint axes from the ground truth data alongside the estimated results for direct comparison
+- **Time Series Animation**: Use the "Time Frame" slider to scrub through the joint motion sequence and observe how the articulated joint moves over time
+- **Point Analysis**: Drag the "Point Index" slider to select different points and view their individual velocity analysis plots, including position trajectories, linear velocities, and angular velocity components
+- **Joint Information Panel**: Expand the "Joint Information" tree node to access:
+  - **Basic Scores**: View collinearity, coplanarity, radius consistency, and zero pitch scores
+  - **Joint Probabilities**: See the probability distribution across different joint types (revolute, prismatic, ball, screw, planar)
+  - **Joint Parameters**: Examine detailed joint axis parameters, origins, and motion ranges
+- **Real-time Parameter Tuning**: Adjust algorithm parameters in the "Joint Analysis Parameters" section and apply changes in real-time
+- **Dataset Management**: Switch between multiple datasets and toggle their visibility in the "Dataset Selection" panel
 
 **Sturm Method:**
 ```bash
 python -m evaluation_sturm
 ```
+Same GUI interface as above, but showing results from the Sturm probabilistic method.
 
 **Martin Method:**
 ```bash
 python -m evaluation_martin_thesis
 ```
+Same GUI interface as above, but showing results from the Martin spatial twist-based method.
 
 #### 2. Batch Evaluation
 
@@ -77,28 +91,62 @@ python -m evaluation_martin_thesis
 ```bash
 python my_evaluation_slide_batch.py
 ```
-- Output: `joint_analysis_evaluation_noise_0p01_YYYYMMDD_HHMMSS.json`
+
+This script performs automated evaluation across all scenes in the dataset:
+
+**Functionality:**
+- **Scene Processing**: Automatically processes all joint motion data files in the dataset directory
+- **Ground Truth Comparison**: Compares estimated joint parameters with ground truth data for each scene
+- **Accuracy Calculation**: Computes joint type classification accuracy across all object categories
+- **Error Analysis**: Calculates quantitative error metrics including:
+  - Angular error between estimated and true joint axes (in degrees)
+  - Spatial distance error between estimated and true axis positions (in meters)
+  - Motion range estimation accuracy
+- **Statistical Summary**: Generates overall success rates and per-object-type performance statistics
+- **Output Format**: Saves comprehensive results to a timestamped JSON file: `joint_analysis_evaluation_noise_0p01_YYYYMMDD_HHMMSS.json`
 
 **Sturm Method Batch Evaluation:**
 ```bash
 python -m evaluation_sturm_slide_batch
 ```
+- Performs the same comprehensive evaluation using Sturm's probabilistic approach
 - Output: `sturm_joint_analysis_evaluation_noise_0p01_YYYYMMDD_HHMMSS.json`
 
 **Martin Method Batch Evaluation:**
 ```bash
 python -m evaluation_martin_slide_batch
 ```
+- Performs the same comprehensive evaluation using Martin's spatial twist method
 - Output: `martin_joint_analysis_evaluation_noise_0p01_YYYYMMDD_HHMMSS.json`
 
 ### Thesis Version Reproduction
 
-
 ![Image](closewash.png)
+
 #### Single-file Visualization Testing
 ```bash
 python my_evaluation_thesis.py
 ```
+
+This script is designed for thesis-specific data analysis with the following characteristics:
+
+**Data Setup Required:**
+- **Manual File Configuration**: You need to manually specify the joint motion .npy data files at the end of the code before running
+- **Custom Dataset**: Uses thesis-specific data extractions that may differ from the slide version dataset
+
+**GUI Interface:**
+- **Same Visualization Features**: Opens the same Polyscope GUI interface as the slide version with identical functionality:
+  - Ground truth visualization toggle
+  - Time frame animation controls
+  - Point index selection and velocity analysis
+  - Joint information panels with scores, probabilities, and parameters
+- **Manual Error Calculation**: Unlike the automated batch evaluation, this version requires manual calculation of joint parameter errors between estimated and ground truth values
+- **Interactive Analysis**: Designed for detailed, case-by-case analysis rather than automated batch processing
+
+**Usage Notes:**
+- Modify the file paths in the code to point to your specific thesis data files
+- Use the GUI to qualitatively assess joint estimation performance
+- Manually record and compare joint parameters for quantitative analysis
 
 ## Parameter Configuration
 
@@ -217,7 +265,7 @@ When running single-file visualization, the Polyscope 3D visualization interface
 
 1. **Import Errors**: Ensure all dependencies are correctly installed
 2. **Path Errors**: Check if dataset path is correct
-3**Visualization Issues**: Ensure display environment supports OpenGL
+3. **Visualization Issues**: Ensure display environment supports OpenGL
 
 ### Debugging Suggestions
 
@@ -254,7 +302,7 @@ Example: `s204_drawer_part2_1320_1440.npy`
 ### Ground Truth Data
 Ground truth joint information is stored in:
 ```
-/common/homes/all/uksqc_chen/projects/control/ParaHome/all_scenes_transformed_axis_pivot_data.json
+all_scenes_transformed_axis_pivot_data.json
 ```
 
 ### Noise Robustness Testing

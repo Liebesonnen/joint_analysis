@@ -9,9 +9,33 @@ from datetime import datetime
 from robot_utils.viz.polyscope import PolyscopeUtils, ps, psim, register_point_cloud, draw_frame_3d
 import sys
 # Import joint analysis project modules
+from robot_utils.path import add_deps_path
+
+
+def quick_setup_joint_analysis() -> bool:
+    """Quick setup function to import joint analysis dependencies.
+
+    Attempts to add the joint-analysis package to the path and import it.
+    Falls back to a hardcoded path if the package method fails.
+
+    Returns:
+        bool: True if successful, raises exception if both methods fail.
+    """
+    try:
+        add_deps_path(pkg_name="joint-analysis")
+        import joint_analysis
+        return True
+    except:
+        # Fallback to hardcoded path method
+        sys.path.insert(0, '/common/homes/all/uksqc_chen/projects/control')
+        import joint_analysis
+        return True
+
+
+quick_setup_joint_analysis()
+# Import joint analysis project modules
 from joint_analysis.core.joint_estimation import compute_joint_info_all_types
 
-sys.path.append('/common/homes/all/uksqc_chen/projects/control')
 class EnhancedViz:
     def __init__(self, file_paths=None):
         # Initialize default file paths list if none provided

@@ -1,0 +1,25 @@
+prismatic:
+    col: 1.0
+    cop: 1.0
+    radius: 0.0
+    zp: 1.0
+revolute:
+    col: 0.0
+    cop: 1.0
+    radius: 1.0
+    zp: 1.0
+planar:
+    col: 0.0
+    cop: 1.0
+    radius: 0.0
+    zp: 1.0
+screw:
+    col: 0.0
+    cop: 0.0
+    radius: 1.0
+    zp: 1.0
+ball:
+    col: 0.0
+    cop: 0.0
+    radius: 1.0
+    zp: 0.0
