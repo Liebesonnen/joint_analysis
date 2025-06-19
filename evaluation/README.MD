@@ -221,7 +221,6 @@ Each evaluation generates a JSON format result file containing:
       "average_angle_error": "Average angle error",
       "average_distance_error": "Average distance error"
     }
-    // ... other object types
   },
   "detailed_group_results": ["Detailed results list"]
 }
