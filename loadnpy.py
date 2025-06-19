@@ -5,18 +5,18 @@ import polyscope.imgui as psim
 
 
 class NPYVisualizer:
-    """使用Polyscope可视化NPY点云数据"""
+    """Visualize NPY point cloud data using Polyscope"""
 
     def __init__(self):
-        """初始化可视化器"""
-        # 初始化Polyscope
+        """Initialize the visualizer"""
+        # Initialize Polyscope
         if not ps.is_initialized():
             ps.init()
 
-        # 禁用地面平面
+        # Disable ground plane
         ps.set_ground_plane_mode("none")
 
-        # 存储点云和路径
+        # Store point clouds and paths
         self.point_clouds = {}
         self.all_files = {}
         self.current_file = None
@@ -26,15 +26,15 @@ class NPYVisualizer:
         self.play_speed = 1
         self.root_dir = "exported_pointclouds"
 
-        # 查找所有NPY文件
+        # Find all NPY files
         self._find_all_npy_files()
 
     def _find_all_npy_files(self):
-        """查找exported_pointclouds目录中的所有NPY文件"""
+        """Find all NPY files in the exported_pointclouds directory"""
         self.all_files = {}
 
         if not os.path.exists(self.root_dir):
-            print(f"错误: 目录 '{self.root_dir}' 不存在")
+            print(f"Error: Directory '{self.root_dir}' does not exist")
             return
 
         for dirpath, dirnames, filenames in os.walk(self.root_dir):
@@ -45,44 +45,44 @@ class NPYVisualizer:
                     self.all_files[rel_path] = file_path
 
     def load_npy_file(self, file_path):
-        """加载NPY文件"""
+        """Load NPY file"""
         try:
             data = np.load(file_path)
 
-            # 检查数据形状
+            # Check data shape
             if len(data.shape) != 3 or data.shape[2] != 3:
-                print(f"警告: 文件 {file_path} 的形状 {data.shape} 不是预期的 (T, N, 3) 形状")
+                print(f"Warning: File {file_path} has shape {data.shape}, expected (T, N, 3)")
                 return None
 
-            print(f"加载文件: {os.path.basename(file_path)}")
-            print(f"形状: {data.shape}")
+            print(f"Loaded file: {os.path.basename(file_path)}")
+            print(f"Shape: {data.shape}")
             return data
         except Exception as e:
-            print(f"加载 {file_path} 时出错: {e}")
+            print(f"Error loading {file_path}: {e}")
             return None
 
-    def register_point_cloud(self, frame, points, name="点云"):
-        """在Polyscope中注册点云"""
-        # 清除所有之前的点云
+    def register_point_cloud(self, frame, points, name="Point Cloud"):
+        """Register point cloud in Polyscope"""
+        # Clear all previous point clouds
         for cloud_name in list(self.point_clouds.keys()):
             ps.remove_point_cloud(cloud_name)
         self.point_clouds.clear()
 
-        # 注册新的点云
-        cloud_name = f"{name}_帧{frame}"
+        # Register new point cloud
+        cloud_name = f"{name}_Frame{frame}"
         self.point_clouds[cloud_name] = ps.register_point_cloud(cloud_name, points)
 
-        # 可选: 为点云添加颜色
-        color = np.ones((points.shape[0], 3)) * 0.7  # 默认浅灰色
-        self.point_clouds[cloud_name].add_color_quantity("默认颜色", color, enabled=True)
+        # Optional: Add color to point cloud
+        color = np.ones((points.shape[0], 3)) * 0.7  # Default light gray
+        self.point_clouds[cloud_name].add_color_quantity("Default Color", color, enabled=True)
 
-        # 可选: 设置点大小
+        # Optional: Set point size
         self.point_clouds[cloud_name].set_radius(0.01)
 
         return cloud_name
 
     def show_sequence(self, file_path, frame_index=0):
-        """显示序列中的特定帧"""
+        """Show specific frame in sequence"""
         data = self.load_npy_file(file_path)
         if data is None:
             return
@@ -96,7 +96,7 @@ class NPYVisualizer:
         self.register_point_cloud(self.current_frame, points, file_name)
 
     def update_frame(self, new_frame):
-        """更新显示的帧"""
+        """Update displayed frame"""
         if self.current_file is None:
             return
 
@@ -110,12 +110,12 @@ class NPYVisualizer:
         self.register_point_cloud(self.current_frame, points, file_name)
 
     def polyscope_callback(self):
-        """Polyscope UI回调"""
-        psim.TextUnformatted("NPY文件点云可视化")
+        """Polyscope UI callback"""
+        psim.TextUnformatted("NPY Point Cloud Visualization")
         psim.Separator()
 
-        # 文件选择下拉菜单
-        if psim.BeginCombo("选择NPY文件", os.path.basename(self.current_file) if self.current_file else "选择文件"):
+        # File selection dropdown menu
+        if psim.BeginCombo("Select NPY File", os.path.basename(self.current_file) if self.current_file else "Select File"):
             for rel_path, file_path in self.all_files.items():
                 _, selected = psim.Selectable(rel_path, self.current_file == file_path)
                 if selected and self.current_file != file_path:
@@ -124,77 +124,77 @@ class NPYVisualizer:
 
         psim.Separator()
 
-        # 帧控制
+        # Frame controls
         if self.current_file is not None:
-            # 显示当前帧信息
-            psim.TextUnformatted(f"总帧数: {self.total_frames}")
+            # Display current frame information
+            psim.TextUnformatted(f"Total Frames: {self.total_frames}")
 
-            # 帧滑块
-            changed, new_frame = psim.SliderInt("帧", self.current_frame, 0, self.total_frames - 1)
+            # Frame slider
+            changed, new_frame = psim.SliderInt("Frame", self.current_frame, 0, self.total_frames - 1)
             if changed:
                 self.update_frame(new_frame)
 
-            # 播放控制
-            psim.TextUnformatted("播放控制:")
+            # Playback controls
+            psim.TextUnformatted("Playback Controls:")
             if self.auto_play:
-                if psim.Button("暂停"):
+                if psim.Button("Pause"):
                     self.auto_play = False
             else:
-                if psim.Button("播放"):
+                if psim.Button("Play"):
                     self.auto_play = True
 
             psim.SameLine()
-            if psim.Button("前一帧"):
+            if psim.Button("Previous Frame"):
                 self.update_frame(self.current_frame - 1)
 
             psim.SameLine()
-            if psim.Button("后一帧"):
+            if psim.Button("Next Frame"):
                 self.update_frame(self.current_frame + 1)
 
-            # 播放速度
-            changed, new_speed = psim.SliderInt("播放速度", self.play_speed, 1, 10)
+            # Playback speed
+            changed, new_speed = psim.SliderInt("Playback Speed", self.play_speed, 1, 10)
             if changed:
                 self.play_speed = new_speed
 
-            # 如果自动播放，更新帧
+            # If auto playing, update frame
             if self.auto_play:
                 new_frame = (self.current_frame + self.play_speed) % self.total_frames
                 self.update_frame(new_frame)
 
         psim.Separator()
 
-        # 点云设置
+        # Point cloud settings
         if self.point_clouds:
-            psim.TextUnformatted("点云设置:")
+            psim.TextUnformatted("Point Cloud Settings:")
 
-            # 点大小
+            # Point size
             for cloud_name, cloud in self.point_clouds.items():
                 radius = cloud.get_radius()
-                changed, new_radius = psim.SliderFloat("点大小", radius, 0.001, 0.05)
+                changed, new_radius = psim.SliderFloat("Point Size", radius, 0.001, 0.05)
                 if changed:
                     cloud.set_radius(new_radius)
 
-        # 刷新文件列表按钮
-        if psim.Button("刷新文件列表"):
+        # Refresh file list button
+        if psim.Button("Refresh File List"):
             self._find_all_npy_files()
 
     def run(self):
-        """运行可视化器"""
+        """Run the visualizer"""
         ps.set_user_callback(self.polyscope_callback)
         ps.show()
 
 
 def main():
-    """主函数"""
-    print("正在初始化Polyscope可视化器...")
+    """Main function"""
+    print("Initializing Polyscope visualizer...")
     visualizer = NPYVisualizer()
 
-    # 如果有文件，显示第一个
+    # If files exist, show the first one
     if visualizer.all_files:
         first_file = list(visualizer.all_files.values())[0]
         visualizer.show_sequence(first_file)
 
-    print("启动Polyscope界面...")
+    print("Starting Polyscope interface...")
     visualizer.run()
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ from .geometry import (
 )
 from .scoring import (
     super_gaussian, normalize_vector_torch, compute_basic_scores,
-    compute_joint_probability_new, compute_motion_salience_batch,
+    compute_joint_probability, compute_motion_salience_batch,
     compute_position_average_3d
 )
 from .joint_estimation import (
@@ -26,7 +26,7 @@ __all__ = [
 
     # Scoring
     'super_gaussian', 'normalize_vector_torch', 'compute_basic_scores',
-    'compute_joint_probability_new', 'compute_motion_salience_batch',
+    'compute_joint_probability', 'compute_motion_salience_batch',
     'compute_position_average_3d',
 
     # Joint estimation

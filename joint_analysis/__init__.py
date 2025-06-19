@@ -5,7 +5,7 @@ Joint Analysis package for estimating and analyzing joint types from point cloud
 from .core import (
     compute_joint_info_all_types,
     compute_basic_scores,
-    compute_joint_probability_new,
+    compute_joint_probability,
     compute_motion_salience_batch,
     point_line_distance,
     translate_points,
@@ -37,7 +37,7 @@ __all__ = [
     # Core functionality
     'compute_joint_info_all_types',
     'compute_basic_scores',
-    'compute_joint_probability_new',
+    'compute_joint_probability',
     'compute_motion_salience_batch',
 
     # Geometry utilities

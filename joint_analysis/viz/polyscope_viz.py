@@ -406,16 +406,11 @@ class PolyscopeVisualizer:
 
     def setup_camera(self, center: Optional[np.ndarray] = None):
         """Set up the camera view."""
-        # 不进行任何设置，让Polyscope自动处理视角
-        # 或者可以尝试最基本的函数（如果有的话）
         try:
             ps.set_view_angle(45.0)
         except:
             pass
 
-        # 注释掉所有可能不兼容的函数调用
-        # ps.look_at(center)
-        # ps.reset_camera()
 
     def show(self, callback: Optional[Callable] = None) -> None:
         """

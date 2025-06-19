@@ -11,7 +11,6 @@ class JointType(StrEnum):
     Planar = "Planar"
     Ball = "Ball"
 
-
 @dataclass
 class ExpectedScore(AbstractDataclass):
     col: float = 0

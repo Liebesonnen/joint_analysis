@@ -1,5 +1,3 @@
-from joint_analysis.build.lib.evaluation.unwrap import velocity
-
 # Reproductions
 
 This repository contains reproductions of three influential papers in the field of articulated object analysis, joint estimation, and motion filtering. Each reproduction focuses on different aspects of understanding and tracking articulated objects from sensor data.

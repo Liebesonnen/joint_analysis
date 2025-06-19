@@ -36,7 +36,7 @@ from obj_can_space.template.obj_template import RepairedObjData
 
 # Import joint analysis module
 try:
-    from joint_analysis.core.joint_estimation import compute_joint_info_all_types
+    from joint_analysis0.core.joint_estimation import compute_joint_info_all_types
 
     JOINT_ANALYSIS_AVAILABLE = True
     console.log("Successfully imported joint_analysis module")

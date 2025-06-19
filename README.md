@@ -67,6 +67,31 @@ python run_application.py
 python -m joint_analysis.main
 ```
 
+**🖥️ GUI Interface Description**
+Running the application launches two interactive interfaces:
+
+**Polyscope GUI (3D Visualization)**
+- **Object Mode Selection**: Choose the joint type you want to test and analyze
+- **Hyperparameter Controls**:
+  - **Neighborhood Size**: Adjust the number of neighboring points for local motion estimation
+  - **SG Filter Parameters**: Configure Savitzky-Golay filter window size and polynomial order
+  - **Super Gaussian Functions**: Fine-tune sigma and order parameters for each joint type's scoring function
+- **Real-time Control**:
+  - **Start**: Begin online joint estimation and analysis
+  - **Stop**: Halt the current estimation process
+  - **Save Motion**: Export recorded motion data as NPY files for later analysis
+
+**Plot GUI (Analysis Dashboard)**
+- **Motion Visualization**: Real-time plots showing:
+  - **Angular Velocity**: Rotational motion components over time for different joint types
+  - **Linear Velocity**: Translational motion components over time
+- **Performance Metrics**:
+  - **Basic Scores**: Fundamental geometric consistency scores
+  - **Joint Errors**: Quantitative error measurements for joint parameter estimation
+  - **Joint Probabilities**: Confidence levels for each joint type classification over time
+
+This dual-interface design allows for comprehensive real-time analysis combining 3D visualization with detailed quantitative monitoring.
+
 #### **Key Modules Structure**
 ```
 joint_analysis/
@@ -152,9 +177,8 @@ SG PolyOrder: SG filter polynomial order (default: 2)
 
 ### **Priority Reading Order**
 1. **`evaluation/README.md`** - Understand experimental setup and results
-2. **`reproduction_paper/README.md`** - Understand baseline implementations  
-3. **This document** - Overall framework understanding
-4. **`joint_analysis/core/`** - Core algorithm implementation
+2. **`reproduction_paper/README.md`** - Understand baseline implementations
+3. **`joint_analysis/core/`** - Core algorithm implementation
 
 ### **Development Workflow**
 1. **Reproduce existing results on Parahome** using `evaluation/` scripts
@@ -169,8 +193,7 @@ SG PolyOrder: SG filter polynomial order (default: 2)
 
 ### **Documentation References**
 - **Detailed Experiments**: `evaluation/README.md`
-- **Paper Reproductions**: `reproduction_paper/README.md`  
-- **Core API Documentation**: See docstrings in `joint_analysis/core/`
+- **Paper Reproductions**: `reproduction_paper/README.md`
 
 ### **🙏 Acknowledgments**
 - Special thanks to **Jianfeng** for guidance and supervision throughout this project

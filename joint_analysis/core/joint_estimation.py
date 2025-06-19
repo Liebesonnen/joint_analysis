@@ -5,9 +5,13 @@ import math
 import numpy as np
 import torch
 from scipy.signal import savgol_filter
+
+from .type import JointType, ExpectedScore, JointExpectedScores
+from .utils import get_data_path
+from robot_utils.py.filesystem import get_validate_file
 from .scoring import (
     normalize_vector_torch, find_neighbors_batch, compute_basic_scores,
-    compute_joint_probability_new, compute_motion_salience_batch, se3_log_map_batch,
+    compute_joint_probability, compute_motion_salience_batch, se3_log_map_batch,
     estimate_rotation_matrix_batch
 )
 
@@ -2269,10 +2273,22 @@ def compute_joint_info_all_types(
         "rad_mean": rad_mean,
         "zp_mean": zp_mean
     }
+    from omegaconf import OmegaConf
 
+    # 创建期望分数配置（基于你的 YAML 内容）
+    joint_exp_score_config = {
+        'prismatic': {'col': 1.0, 'cop': 1.0, 'radius': 0.0, 'zp': 1.0},
+        'revolute': {'col': 0.0, 'cop': 1.0, 'radius': 1.0, 'zp': 1.0},
+        'planar': {'col': 0.0, 'cop': 1.0, 'radius': 0.0, 'zp': 1.0},
+        'screw': {'col': 0.0, 'cop': 0.0, 'radius': 1.0, 'zp': 1.0},
+        'ball': {'col': 0.0, 'cop': 0.0, 'radius': 1.0, 'zp': 0.0}
+    }
+
+    joint_exp_score = OmegaConf.create(joint_exp_score_config)
     # Compute joint type probabilities with joint-specific parameters
-    prismatic_pt = compute_joint_probability_new(
-        col, cop, rad, zp, "prismatic",
+    prismatic_pt = compute_joint_probability(
+        col, cop, rad, zp, joint_exp_score,
+    joint_type=JointType.Prismatic,
         prob_sigma=prob_sigma, prob_order=prob_order,
         prismatic_sigma=prismatic_sigma, prismatic_order=prismatic_order,
         planar_sigma=planar_sigma, planar_order=planar_order,
@@ -2281,8 +2297,9 @@ def compute_joint_info_all_types(
         ball_sigma=ball_sigma, ball_order=ball_order
     )
 
-    planar_pt = compute_joint_probability_new(
-        col, cop, rad, zp, "planar",
+    planar_pt = compute_joint_probability(
+        col, cop, rad, zp, joint_exp_score,
+    joint_type=JointType.Planar,
         prob_sigma=prob_sigma, prob_order=prob_order,
         prismatic_sigma=prismatic_sigma, prismatic_order=prismatic_order,
         planar_sigma=planar_sigma, planar_order=planar_order,
@@ -2291,8 +2308,9 @@ def compute_joint_info_all_types(
         ball_sigma=ball_sigma, ball_order=ball_order
     )
 
-    revolute_pt = compute_joint_probability_new(
-        col, cop, rad, zp, "revolute",
+    revolute_pt = compute_joint_probability(
+        col, cop, rad, zp, joint_exp_score,
+    joint_type=JointType.Revolute,
         prob_sigma=prob_sigma, prob_order=prob_order,
         prismatic_sigma=prismatic_sigma, prismatic_order=prismatic_order,
         planar_sigma=planar_sigma, planar_order=planar_order,
@@ -2301,8 +2319,9 @@ def compute_joint_info_all_types(
         ball_sigma=ball_sigma, ball_order=ball_order
     )
 
-    screw_pt = compute_joint_probability_new(
-        col, cop, rad, zp, "screw",
+    screw_pt = compute_joint_probability(
+        col, cop, rad, zp, joint_exp_score,
+    joint_type=JointType.Screw,
         prob_sigma=prob_sigma, prob_order=prob_order,
         prismatic_sigma=prismatic_sigma, prismatic_order=prismatic_order,
         planar_sigma=planar_sigma, planar_order=planar_order,
@@ -2311,8 +2330,9 @@ def compute_joint_info_all_types(
         ball_sigma=ball_sigma, ball_order=ball_order
     )
 
-    ball_pt = compute_joint_probability_new(
-        col, cop, rad, zp, "ball",
+    ball_pt = compute_joint_probability(
+        col, cop, rad, zp, joint_exp_score,
+    joint_type=JointType.Ball,
         prob_sigma=prob_sigma, prob_order=prob_order,
         prismatic_sigma=prismatic_sigma, prismatic_order=prismatic_order,
         planar_sigma=planar_sigma, planar_order=planar_order,

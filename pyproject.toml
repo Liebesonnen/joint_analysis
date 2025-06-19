@@ -25,98 +25,98 @@ classifiers = [
 ]
 
 dependencies = [
-    # Core scientific computing - 稳定的版本区间
-    "numpy>=1.20.0,<2.0.0",           # 避免 numpy 2.x 可能的破坏性变更
-    "scipy>=1.7.0,<1.14.0",          # 允许 1.x 系列的稳定更新
-    "matplotlib>=3.5.0,<3.9.0",       # 3.x 系列稳定版本
-    "scikit-learn>=1.0.0,<1.6.0",     # 1.x 系列机器学习库
+    # Core scientific computing - stable version ranges
+    "numpy>=1.20.0,<2.0.0",           # Avoid potential breaking changes in numpy 2.x
+    "scipy>=1.7.0,<1.14.0",          # Allow stable updates in 1.x series
+    "matplotlib>=3.5.0,<3.9.0",       # Stable versions in 3.x series
+    "scikit-learn>=1.0.0,<1.6.0",     # Machine learning library 1.x series
 
-    # Deep learning framework - PyTorch 生态系统
-    "torch>=2.0.0,<2.6.0",           # PyTorch 2.x 系列
-    "torchvision>=0.15.0,<0.21.0",   # 对应 torch 版本的 torchvision
-    "torchaudio>=2.0.0,<2.6.0",      # 对应 torch 版本的 torchaudio
+    # Deep learning framework - PyTorch ecosystem
+    "torch>=2.0.0,<2.6.0",           # PyTorch 2.x series
+    "torchvision>=0.15.0,<0.21.0",   # TorchVision corresponding to torch version
+    "torchaudio>=2.0.0,<2.6.0",      # TorchAudio corresponding to torch version
 
-    # 3D data processing and visualization - 关键可视化库
-    "polyscope==2.4.0",       # 3D 可视化，避免主版本更新
-    "open3d>=0.16.0,<0.19.0",        # 3D 处理库稳定版本
-    "dearpygui==1.8.0",     # GUI 库 - 移至可选依赖避免 GLIBC 问题
+    # 3D data processing and visualization - key visualization libraries
+    "polyscope==2.4.0",       # 3D visualization, avoid major version updates
+    "open3d>=0.16.0,<0.19.0",        # Stable versions of 3D processing library
+    "dearpygui==1.8.0",     # GUI library - moved to optional dependencies to avoid GLIBC issues
 
-    # Computer vision - 图像处理
-    "opencv-python>=4.5.0,<4.11.0",  # OpenCV 4.x 系列
-    "Pillow>=8.0.0,<11.0.0",         # PIL 图像处理库
+    # Computer vision - image processing
+    "opencv-python>=4.5.0,<4.11.0",  # OpenCV 4.x series
+    "Pillow>=8.0.0,<11.0.0",         # PIL image processing library
 
-    # Data processing and utilities - 数据处理工具
-    "pandas>=1.3.0,<2.3.0",          # 数据分析库
-    "seaborn>=0.11.0,<0.14.0",       # 统计可视化
-    "tqdm>=4.60.0,<5.0.0",           # 进度条库
-    "click>=8.0.0,<9.0.0",           # 命令行工具
-    "pyyaml>=6.0.0,<7.0.0",          # YAML 处理
-    "tabulate>=0.9.0,<1.0.0",        # 表格格式化
+    # Data processing and utilities - data processing tools
+    "pandas>=1.3.0,<2.3.0",          # Data analysis library
+    "seaborn>=0.11.0,<0.14.0",       # Statistical visualization
+    "tqdm>=4.60.0,<5.0.0",           # Progress bar library
+    "click>=8.0.0,<9.0.0",           # Command line tools
+    "pyyaml>=6.0.0,<7.0.0",          # YAML processing
+    "tabulate>=0.9.0,<1.0.0",        # Table formatting
 
-    # Logging and debugging - 调试工具
-    "coloredlogs>=15.0,<16.0",       # 彩色日志
-    "icecream>=2.1.0,<3.0.0",        # 调试工具
-    "rich>=12.0.0,<14.0.0",          # 富文本输出
+    # Logging and debugging - debugging tools
+    "coloredlogs>=15.0,<16.0",       # Colored logging
+    "icecream>=2.1.0,<3.0.0",        # Debugging tool
+    "rich>=12.0.0,<14.0.0",          # Rich text output
 
-    # Data serialization - 数据序列化
-    "marshmallow>=3.15.0,<4.0.0",    # 序列化库
-    "marshmallow-dataclass>=8.5.0,<9.0.0",  # 数据类支持
-    "marshmallow_enum>=1.5.1,<2.0.0", # 枚举支持
+    # Data serialization - data serialization libraries
+    "marshmallow>=3.15.0,<4.0.0",    # Serialization library
+    "marshmallow-dataclass>=8.5.0,<9.0.0",  # Dataclass support
+    "marshmallow_enum>=1.5.1,<2.0.0", # Enum support
 
-    # Additional utilities for the project - 项目特定工具
-    "natsort>=8.0.0,<9.0.0",         # 自然排序
-    "deprecation>=2.1.0,<3.0.0",     # 弃用警告
-    "typeguard>=2.13.0,<5.0.0",      # 类型检查
-    "einops>=0.6.0,<1.0.0",          # 张量操作
+    # Additional utilities for the project - project-specific tools
+    "natsort>=8.0.0,<9.0.0",         # Natural sorting
+    "deprecation>=2.1.0,<3.0.0",     # Deprecation warnings
+    "typeguard>=2.13.0,<5.0.0",      # Type checking
+    "einops>=0.6.0,<1.0.0",          # Tensor operations
 ]
 
 [project.optional-dependencies]
-# Development dependencies - 根据可能的兼容版本
+# Development dependencies - based on compatible versions
 dev = [
-    "pytest>=8.3.0,<8.4.0",          # 测试框架
-    "pytest-cov>=4.0.0,<6.0.0",     # 测试覆盖率
-    "flake8>=5.0.0,<8.0.0",          # 代码检查
-    "black>=22.0.0,<25.0.0",         # 代码格式化
-    "isort>=5.10.0,<6.0.0",          # import 排序
-    "mypy>=1.0.0,<2.0.0",            # 类型检查
-    "types-setuptools>=57.0.0,<70.0.0", # 类型定义
-    "pre-commit>=2.15.0,<4.0.0",     # Git 钩子
+    "pytest>=8.3.0,<8.4.0",          # Testing framework
+    "pytest-cov>=4.0.0,<6.0.0",     # Test coverage
+    "flake8>=5.0.0,<8.0.0",          # Code linting
+    "black>=22.0.0,<25.0.0",         # Code formatting
+    "isort>=5.10.0,<6.0.0",          # Import sorting
+    "mypy>=1.0.0,<2.0.0",            # Type checking
+    "types-setuptools>=57.0.0,<70.0.0", # Type definitions
+    "pre-commit>=2.15.0,<4.0.0",     # Git hooks
 ]
 
-# Evaluation and research dependencies - 根据您的实际版本
+# Evaluation and research dependencies - based on your actual versions
 research = [
-    "jupyter-core==5.7.2",    # 匹配您的 5.7.2
-    "notebook>=6.4.0,<8.0.0",        # Notebook 界面
-    "ipywidgets==8.1.5",      # 匹配您的 8.1.5
-    "wandb==0.19.7",         # 匹配您的 0.19.7
-    "tensorboardx>=2.6.0,<2.7.0",    # 匹配您的 2.6.2.2
-    "gpytorch==1.14.0",      # 匹配您的 1.14
+    "jupyter-core==5.7.2",    # Matches your 5.7.2 version
+    "notebook>=6.4.0,<8.0.0",        # Notebook interface
+    "ipywidgets==8.1.5",      # Matches your 8.1.5 version
+    "wandb==0.19.7",         # Matches your 0.19.7 version
+    "tensorboardx>=2.6.0,<2.7.0",    # Matches your 2.6.2.2 version
+    "gpytorch==1.14.0",      # Matches your 1.14 version
 ]
 
-# GUI 支持 - 根据您成功安装的版本
+# GUI support - based on your successfully installed versions
 gui = [
-    "dearpygui==1.8.0",       # 匹配您的 1.8.0（已成功安装）
-    "ipywidgets==8.1.0",      # 交互式组件
+    "dearpygui==1.8.0",       # Matches your 1.8.0 version (successfully installed)
+    "ipywidgets==8.1.0",      # Interactive components
 ]
 
-# 无头模式依赖 - 基于您的实际版本
+# Headless mode dependencies - based on your actual versions
 headless = [
-    "matplotlib==3.10.0",    # 匹配您的 3.10.0
-    "plotly==6.0.0",          # 匹配您的 6.0.0
-    "ipython==8.32.0",       # 匹配您的 8.32.0
+    "matplotlib==3.10.0",    # Matches your 3.10.0 version
+    "plotly==6.0.0",          # Matches your 6.0.0 version
+    "ipython==8.32.0",       # Matches your 8.32.0 version
 ]
 
-# Full robot-utils integration - 根据您的实际安装版本
+# Full robot-utils integration - based on your actual installed versions
 robot-utils = [
-    "robot-utils==1.0.0",     # 匹配您环境中的 1.0.0
-    "gdown==5.2.0",           # 匹配您的 5.2.0
-    "distlib==0.3.9",         # 匹配您的 0.3.9
-    "GitPython==3.1.44",      # 匹配您的 3.1.44
-    "pathos==0.3.3",          # 匹配您的 0.3.3
-    "wandb==0.19.7",         # 匹配您的 0.19.7
-    "torchsummary==1.5.1",    # 匹配您的 1.5.1
-    "tensorboard_logger==0.1.0", # 匹配您的 0.1.0
-    "inquirer==3.4.0",        # 匹配您的 3.4.0
+    "robot-utils==1.0.0",     # Matches your environment's 1.0.0 version
+    "gdown==5.2.0",           # Matches your 5.2.0 version
+    "distlib==0.3.9",         # Matches your 0.3.9 version
+    "GitPython==3.1.44",      # Matches your 3.1.44 version
+    "pathos==0.3.3",          # Matches your 0.3.3 version
+    "wandb==0.19.7",         # Matches your 0.19.7 version
+    "torchsummary==1.5.1",    # Matches your 1.5.1 version
+    "tensorboard_logger==0.1.0", # Matches your 0.1.0 version
+    "inquirer==3.4.0",        # Matches your 3.4.0 version
 ]
 
 # All optional dependencies
@@ -124,7 +124,7 @@ all = [
     "joint-analysis[dev,research,robot-utils,headless]"
 ]
 
-# 完整 GUI 环境（需要较新系统）
+# Complete GUI environment (requires newer system)
 full-gui = [
     "joint-analysis[dev,research,robot-utils,gui,headless]"
 ]
