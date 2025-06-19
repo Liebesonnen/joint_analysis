@@ -43,11 +43,6 @@ evaluation/
 - Supports real-time probability estimation
 - Not implemented joint parameter estimation
 
-## Environment Setup
-
-```bash
-```
-
 ## Reproduction Guide
 
 ### Slide Version Reproduction
