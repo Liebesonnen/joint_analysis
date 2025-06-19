@@ -6,8 +6,8 @@ __pycache__/
 # C extensions
 *.so
 
-./evaluation/parahome_data_slide
-./evaluation/parahome_data_thesis
+evaluation/parahome_data_slide
+evaluation/parahome_data_thesis
 
 # Distribution / packaging
 .Python
